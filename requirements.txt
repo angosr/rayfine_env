@@ -1,0 +1,12 @@
+# Core dependencies
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Docker support for containerized environments
+docker>=7.0.0
+
+# Ray for local execution
+ray[default]>=2.9.0
+
+# Note: rayfine must be installed separately from crates/rayfine-python for remote execution
+# cd ../crates/rayfine-python && maturin develop --release
