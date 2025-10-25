@@ -15,7 +15,8 @@ def build_image_from_env(
     env_path: str,
     image_tag: str,
     nocache: bool = False,
-    quiet: bool = False
+    quiet: bool = False,
+    buildargs: Optional[Dict[str, str]] = None
 ) -> str:
     """
     Build Docker image from environment definition
@@ -25,6 +26,7 @@ def build_image_from_env(
         image_tag: Image tag (e.g., "affine:latest")
         nocache: Don't use build cache
         quiet: Suppress build output
+        buildargs: Docker build arguments (e.g., {"ENV_NAME": "webshop"})
         
     Returns:
         Built image ID
@@ -41,7 +43,8 @@ def build_image_from_env(
             env_path=env_path,
             image_tag=image_tag,
             nocache=nocache,
-            quiet=quiet
+            quiet=quiet,
+            buildargs=buildargs
         )
         
         logger.info(f"Image '{image_tag}' built successfully")
@@ -88,10 +91,7 @@ def load_env(
     """
     try:
         # Generate unique environment ID
-        timestamp = int(time.time() * 1000)
-        env_id = f"{image.replace(':', '-')}_{timestamp}"
-        
-        logger.debug(f"Loading environment '{env_id}' in {mode} mode")
+        logger.debug(f"Loading '{image}' in {mode} mode")
         
         # Create appropriate backend
         if mode == "local":
@@ -110,13 +110,13 @@ def load_env(
             raise ValidationError(f"Invalid mode: {mode}. Must be 'local' or 'remote'")
         
         # Create wrapper
-        wrapper = EnvironmentWrapper(backend=backend, env_id=env_id)
+        wrapper = EnvironmentWrapper(backend=backend)
         
         # Register in global registry
         registry = get_registry()
-        registry.register(env_id, wrapper)
-        
-        logger.debug(f"Environment '{env_id}' loaded successfully")
+        registry.register(backend.name, wrapper)
+
+        logger.debug(f"Environment '{backend.name}' loaded successfully")
         return wrapper
         
     except Exception as e:

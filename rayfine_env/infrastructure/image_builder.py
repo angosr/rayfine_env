@@ -1,6 +1,7 @@
 """Docker image building from environment definitions"""
 
 import docker
+import importlib.util
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +24,8 @@ class ImageBuilder:
         env_path: str,
         image_tag: str,
         nocache: bool = False,
-        quiet: bool = False
+        quiet: bool = False,
+        buildargs: Optional[dict] = None
     ) -> str:
         """
         Build Docker image from environment directory
@@ -40,6 +42,7 @@ class ImageBuilder:
             image_tag: Image tag (e.g., "affine:latest")
             nocache: Don't use build cache
             quiet: Suppress build output
+            buildargs: Docker build arguments (e.g., {"ENV_NAME": "webshop", "TOOL_NAME": "webshop"})
             
         Returns:
             Built image ID
@@ -68,28 +71,45 @@ class ImageBuilder:
         
         logger.info(f"Using Dockerfile from {dockerfile_path}")
         
+        # Auto-resolve buildargs using config.py if exists
+        config_path = env_path / "config.py"
+        if config_path.exists() and buildargs:
+            buildargs = self._resolve_buildargs(config_path, buildargs)
+        
         # Build image
         try:
             logger.info(f"Building image '{image_tag}' from {env_path}")
             
-            image, build_logs = self.client.images.build(
+            if buildargs:
+                logger.info(f"Using build args: {buildargs}")
+            
+            # Stream build output in real-time
+            build_logs = self.client.api.build(
                 path=str(env_path),
                 tag=image_tag,
                 dockerfile="Dockerfile",
+                buildargs=buildargs or {},
                 nocache=nocache,
-                rm=True  # Remove intermediate containers
+                rm=True,
+                decode=True
             )
             
-            # Log build output
-            if not quiet:
-                for log in build_logs:
-                    if "stream" in log:
-                        logger.debug(log["stream"].strip())
-                    elif "error" in log:
-                        logger.error(log["error"].strip())
+            image_id = None
+            for log in build_logs:
+                if "stream" in log and not quiet:
+                    print(log["stream"].rstrip(), flush=True)
+                elif "error" in log:
+                    print(log["error"].strip(), flush=True)
+                    raise ImageBuildError(f"Build failed: {log['error']}")
+                elif "aux" in log and "ID" in log["aux"]:
+                    image_id = log["aux"]["ID"]
             
+            if not image_id:
+                raise ImageBuildError("Build completed but no image ID returned")
+            
+            image = self.client.images.get(image_id)
             logger.info(f"Successfully built image '{image_tag}' ({image.short_id})")
-            return image.id
+            return image_tag
             
         except docker.errors.BuildError as e:
             error_msg = "Image build failed:\n"
@@ -101,6 +121,39 @@ class ImageBuilder:
             raise ImageBuildError(error_msg)
         except Exception as e:
             raise ImageBuildError(f"Failed to build image: {e}")
+    
+    def _resolve_buildargs(self, config_path: Path, buildargs: dict) -> dict:
+        """
+        Resolve build arguments using config.py
+        
+        Args:
+            config_path: Path to config.py
+            buildargs: Original build arguments
+            
+        Returns:
+            Resolved build arguments (original merged with resolved config)
+        """
+        try:
+            # Dynamically import config module
+            spec = importlib.util.spec_from_file_location("env_config", config_path)
+            config_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(config_module)
+            
+            # Look for standard resolve_buildargs function
+            if hasattr(config_module, "resolve_buildargs"):
+                resolve_func = getattr(config_module, "resolve_buildargs")
+                logger.info(f"Found resolve_buildargs in {config_path}")
+                
+                resolved = resolve_func(buildargs)
+                logger.info(f"Resolved build args: {resolved}")
+                return resolved
+            else:
+                logger.debug(f"No resolve_buildargs function in {config_path}")
+                return buildargs
+                
+        except Exception as e:
+            logger.warning(f"Failed to resolve build args: {e}")
+            return buildargs
     
     def push_image(self, image_tag: str, registry: Optional[str] = None) -> None:
         """
