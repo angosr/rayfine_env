@@ -25,7 +25,6 @@ class EnvironmentWrapper:
     def __init__(
         self,
         backend: AbstractBackend,
-        env_id: str
     ):
         """
         Initialize environment wrapper
@@ -35,10 +34,9 @@ class EnvironmentWrapper:
             env_id: Unique environment identifier
         """
         self._backend = backend
-        self._env_id = env_id
+        self.name = backend.name
         self._setup_called = False
-        
-        logger.debug(f"Created EnvironmentWrapper '{env_id}'")
+        logger.debug(f"Created EnvironmentWrapper '{self.name}'")
     
     def setup(self, **env_vars) -> None:
         """
@@ -51,11 +49,11 @@ class EnvironmentWrapper:
             env.setup(CHUTES_API_KEY="xxx", DEBUG="true")
         """
         if self._setup_called:
-            logger.warning(f"Environment '{self._env_id}' already setup")
+            logger.warning(f"Environment '{self.name}' already setup")
             return
         
         try:
-            logger.debug(f"Setting up environment '{self._env_id}'")
+            logger.debug(f"Setting up environment '{self.name}'")
             
             # Convert kwargs to dict of strings
             env_vars_dict = {k: str(v) for k, v in env_vars.items()}
@@ -64,10 +62,10 @@ class EnvironmentWrapper:
             self._backend.setup(env_vars=env_vars_dict)
             self._setup_called = True
             
-            logger.debug(f"Environment '{self._env_id}' setup completed")
+            logger.debug(f"Environment '{self.name}' setup completed")
             
         except Exception as e:
-            raise EnvironmentError(f"Failed to setup environment '{self._env_id}': {e}")
+            raise EnvironmentError(f"Failed to setup environment '{self.name}': {e}")
     
     def cleanup(self) -> None:
         """
@@ -77,12 +75,12 @@ class EnvironmentWrapper:
         Should be called when done using the environment.
         """
         try:
-            logger.debug(f"Cleaning up environment '{self._env_id}'")
+            logger.debug(f"Cleaning up environment '{self.name}'")
             self._backend.cleanup()
             self._setup_called = False
-            logger.debug(f"Environment '{self._env_id}' cleaned up")
+            logger.debug(f"Environment '{self.name}' cleaned up")
         except Exception as e:
-            logger.error(f"Error during cleanup of '{self._env_id}': {e}")
+            logger.error(f"Error during cleanup of '{self.name}': {e}")
     
     def list_methods(self) -> list:
         """
@@ -93,7 +91,7 @@ class EnvironmentWrapper:
         """
         if not self._setup_called:
             raise EnvironmentError(
-                f"Environment '{self._env_id}' not setup. Call setup() first."
+                f"Environment '{self.name}' not setup. Call setup() first."
             )
         
         try:
@@ -135,7 +133,7 @@ class EnvironmentWrapper:
         # Check if setup was called
         if not self._setup_called:
             raise EnvironmentError(
-                f"Environment '{self._env_id}' not setup. Call setup() first."
+                f"Environment '{self.name}' not setup. Call setup() first."
             )
         
         # Return a callable that will invoke the remote method
@@ -152,7 +150,7 @@ class EnvironmentWrapper:
                 Method result
             """
             try:
-                logger.debug(f"Calling method '{name}' on environment '{self._env_id}'")
+                logger.debug(f"Calling method '{name}' on environment '{self.name}'")
                 
                 result = self._backend.call_method(
                     name,
@@ -166,7 +164,7 @@ class EnvironmentWrapper:
                 
             except Exception as e:
                 raise EnvironmentError(
-                    f"Method '{name}' failed on environment '{self._env_id}': {e}"
+                    f"Method '{name}' failed on environment '{self.name}': {e}"
                 )
         
         return method_caller
@@ -187,4 +185,4 @@ class EnvironmentWrapper:
     def __repr__(self) -> str:
         """String representation"""
         status = "ready" if self.is_ready() else "not ready"
-        return f"<EnvironmentWrapper '{self._env_id}' ({status})>"
+        return f"<EnvironmentWrapper '{self.name}' ({status})>"

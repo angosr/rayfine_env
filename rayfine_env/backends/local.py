@@ -1,6 +1,7 @@
 """Local backend - Docker + Ray execution"""
 
 import time
+from datetime import datetime
 from typing import Dict, Optional, Any
 
 from .base import AbstractBackend
@@ -38,7 +39,9 @@ class LocalBackend(AbstractBackend):
             **docker_kwargs: Additional Docker container options
         """
         self.image = image
-        self.container_name = container_name or f"rayfine-{image.replace(':', '-')}-{int(time.time())}"
+        # Generate human-readable timestamp: YYYYMMDD-HHMMSS
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.name = container_name or f"{image.replace(':', '-')}-{timestamp}"
         self.ray_port = ray_port
         
         self._container = None
@@ -60,9 +63,10 @@ class LocalBackend(AbstractBackend):
             # Prepare container configuration
             container_config = {
                 "image": self.image,
-                "name": self.container_name,
+                "name": self.name,
                 "ports": {self.ray_port: self.ray_port},  # Expose Ray client port
                 "detach": True,
+                "restart_policy": {"Name": "always"},  # Auto-restart on failure
                 **docker_kwargs
             }
             
@@ -114,7 +118,7 @@ class LocalBackend(AbstractBackend):
             )
             
             # Create Actor with environment variables
-            actor_name = f"env_actor_{self.container_name}"
+            actor_name = f"env_actor_{self.name}"
             self._ray_executor.create_actor(
                 env_vars=env_vars,
                 actor_name=actor_name
@@ -179,7 +183,7 @@ class LocalBackend(AbstractBackend):
     
     def cleanup(self) -> None:
         """Stop container and disconnect Ray"""
-        logger.debug(f"Cleaning up backend for container {self.container_name}")
+        logger.debug(f"Cleaning up backend for container {self.name}")
         
         # Disconnect Ray
         if self._ray_executor:
