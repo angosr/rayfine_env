@@ -21,18 +21,12 @@ def main():
     # 1. Load environment from pre-built image
     print("\n1. Loading environment from pre-built image 'affine:latest'...")
     
-    try:
-        env = rf_env.load_env(
-            image="affine:latest",
-            mode="local"
-        )
-        print("   ✓ Environment loaded (container started)")
-        
-    except Exception as e:
-        print(f"   ❌ Failed to load environment: {e}")
-        print("\n   Make sure you built the image first:")
-        print("   $ python example.py")
-        sys.exit(1)
+    env = rf_env.load_env(
+        image="affine:latest",
+        mode="local"
+    )
+    print("   ✓ Environment loaded (container started)")
+
 
     try:
         # 2. Setup environment with API key
@@ -57,10 +51,10 @@ def main():
         # 4. Run evaluation
         print("\n4. Running evaluation in container...")
         result = env.evaluate(
-            task_type="sat",
+            task_type="abd",
             model="deepseek-ai/DeepSeek-V3",
             base_url="https://llm.chutes.ai/v1",
-            num_samples=1
+            num_samples=2
         )
         
         # 5. Display results
@@ -85,9 +79,9 @@ def main():
             # Show experiences
             if 'experiences' in detail:
                 exp = detail['experiences']
-                print(f"     Challenge: {exp['challenge'][:100]}...")
+                print(f"     Challenge: {exp['challenge'][:500]}...")
                 if exp['llm_response']:
-                    print(f"     Response: {exp['llm_response'][:100]}...")
+                    print(f"     Response: {exp['llm_response'][:500]}...")
                 else:
                     print(f"     Response: None (LLM call failed)")
         

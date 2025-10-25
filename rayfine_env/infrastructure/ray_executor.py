@@ -35,7 +35,7 @@ class RayExecutor:
         start = time.time()
         last_error = None
         
-        logger.info(f"Connecting to Ray cluster at {self.ray_address}")
+        logger.debug(f"Connecting to Ray cluster at {self.ray_address}")
         
         while time.time() - start < timeout:
             try:
@@ -49,7 +49,6 @@ class RayExecutor:
                 ray.cluster_resources()
                 
                 self.connected = True
-                logger.info("Successfully connected to Ray cluster")
                 return
                 
             except Exception as e:
@@ -81,8 +80,6 @@ class RayExecutor:
             Ray Actor handle
         """
         try:
-            logger.info("Creating Ray Actor")
-            
             # Define Actor class that wraps user's env.py
             @ray.remote
             class EnvActor:
@@ -179,8 +176,6 @@ class RayExecutor:
                 actor_options["name"] = actor_name
             
             self._actor_handle = EnvActor.options(**actor_options).remote(env_vars)
-            
-            logger.info("Ray Actor created successfully")
             return self._actor_handle
             
         except Exception as e:
@@ -249,7 +244,7 @@ class RayExecutor:
         """Disconnect from Ray cluster"""
         try:
             if self.connected:
-                logger.info("Disconnecting from Ray cluster")
+                logger.debug("Disconnecting from Ray cluster")
                 ray.shutdown()
                 self.connected = False
                 self._actor_handle = None

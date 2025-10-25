@@ -103,7 +103,7 @@ class EnvironmentRegistry:
             for env_id in env_ids:
                 try:
                     env = self._environments[env_id]
-                    logger.info(f"Cleaning up environment '{env_id}'")
+                    logger.debug(f"Cleaning up environment '{env_id}'")
                     env.cleanup()
                 except Exception as e:
                     logger.error(f"Error cleaning up environment '{env_id}': {e}")
@@ -111,7 +111,7 @@ class EnvironmentRegistry:
                     # Remove from registry even if cleanup failed
                     self._environments.pop(env_id, None)
             
-            logger.info("All environments cleaned up")
+            logger.debug("All environments cleaned up")
     
     def count(self) -> int:
         """

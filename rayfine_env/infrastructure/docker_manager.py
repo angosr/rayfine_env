@@ -66,8 +66,6 @@ class DockerManager:
             if ports:
                 container_config["ports"] = ports
             
-            # Start container
-            logger.info(f"Starting container from image '{image}'")
             container = self.client.containers.run(**container_config)
             
             # Wait for container to be running
@@ -75,7 +73,7 @@ class DockerManager:
             if container.status != "running":
                 raise ContainerError(f"Container failed to start: {container.status}")
             
-            logger.info(f"Container {container.short_id} started successfully")
+            logger.debug(f"Container {container.short_id} started successfully")
             return container
             
         except ImageNotFoundError:
@@ -95,12 +93,12 @@ class DockerManager:
         """
         try:
             container_id = container.short_id
-            logger.info(f"Stopping container {container_id}")
+            logger.debug(f"Stopping container {container_id}")
             
             container.stop(timeout=timeout)
             container.remove(force=True)
             
-            logger.info(f"Container {container_id} stopped and removed")
+            logger.debug(f"Container {container_id} stopped and removed")
             
         except Exception as e:
             logger.warning(f"Error stopping container: {e}")

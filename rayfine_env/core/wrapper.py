@@ -55,7 +55,7 @@ class EnvironmentWrapper:
             return
         
         try:
-            logger.info(f"Setting up environment '{self._env_id}'")
+            logger.debug(f"Setting up environment '{self._env_id}'")
             
             # Convert kwargs to dict of strings
             env_vars_dict = {k: str(v) for k, v in env_vars.items()}
@@ -64,7 +64,7 @@ class EnvironmentWrapper:
             self._backend.setup(env_vars=env_vars_dict)
             self._setup_called = True
             
-            logger.info(f"Environment '{self._env_id}' setup completed")
+            logger.debug(f"Environment '{self._env_id}' setup completed")
             
         except Exception as e:
             raise EnvironmentError(f"Failed to setup environment '{self._env_id}': {e}")
@@ -77,10 +77,10 @@ class EnvironmentWrapper:
         Should be called when done using the environment.
         """
         try:
-            logger.info(f"Cleaning up environment '{self._env_id}'")
+            logger.debug(f"Cleaning up environment '{self._env_id}'")
             self._backend.cleanup()
             self._setup_called = False
-            logger.info(f"Environment '{self._env_id}' cleaned up")
+            logger.debug(f"Environment '{self._env_id}' cleaned up")
         except Exception as e:
             logger.error(f"Error during cleanup of '{self._env_id}': {e}")
     

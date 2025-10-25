@@ -11,6 +11,8 @@ if '/app' not in sys.path:
     sys.path.insert(0, '/app')
 
 from sat import SATTask
+from abd import ABDTask
+from ded import DEDTask
 
 class Actor:
     """Multi-task evaluation actor"""
@@ -18,7 +20,8 @@ class Actor:
     # Task registry - map task_type to task class
     TASKS = {
         "sat": SATTask,
-        # Future: "graph": GraphTask, "crypto": CryptoTask, ...
+        "abd": ABDTask,
+        "ded": DEDTask,
     }
     
     def __init__(self):
@@ -65,34 +68,37 @@ class Actor:
         if not task_cls:
             raise ValueError(f"Unknown task: {task_type}. Available: {list(self.TASKS.keys())}")
         
+        # Initialize task instance (all tasks now use instance methods)
+        task_instance = task_cls()
+        
         start = time.time()
         details = []
         total_score = 0.0
         
         for i in range(num_samples):
-            # Generate task
-            prompt, sol, cls = task_cls.generate()
+            # Generate challenge (unified async interface)
+            challenge = await task_instance.generate()
             
             # Call LLM
             try:
-                resp = await self._llm_chat(prompt, model, base_url, timeout, temperature)
+                resp = await self._llm_chat(challenge.prompt, model, base_url, timeout, temperature)
                 error = None
             except Exception as e:
                 import traceback
                 resp = None
                 error = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
             
-            # Evaluate
+            # Evaluate (unified async interface)
             score = 0.0
             if resp:
-                score = task_cls.evaluate(resp, cls)
+                score = await task_instance.evaluate(resp, challenge)
             
             total_score += score
             details.append({
                 "id": i,
                 "reward": score,
                 "success": score > 0,
-                "experiences": {"challenge": prompt, "llm_response": resp},
+                "experiences": {"challenge": challenge.prompt, "llm_response": resp},
                 **({} if not error else {"error": error, "error_type": "llm_failure"})
             })
         
@@ -104,14 +110,3 @@ class Actor:
             "time_taken": time.time() - start,
             "details": details
         }
-        
-        
-def evaluate(**args):
-    """
-    Wrapper function to expose Actor.evaluate() to external callers.
-    
-    All container images must include /app/env.py as the entry point.
-    The env.py file can define arbitrary functions that will be exposed through the SDK.
-    This is just one example - you can define any functions you need.
-    """
-    pass

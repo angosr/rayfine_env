@@ -91,7 +91,7 @@ def load_env(
         timestamp = int(time.time() * 1000)
         env_id = f"{image.replace(':', '-')}_{timestamp}"
         
-        logger.info(f"Loading environment '{env_id}' in {mode} mode")
+        logger.debug(f"Loading environment '{env_id}' in {mode} mode")
         
         # Create appropriate backend
         if mode == "local":
@@ -116,7 +116,7 @@ def load_env(
         registry = get_registry()
         registry.register(env_id, wrapper)
         
-        logger.info(f"Environment '{env_id}' loaded successfully")
+        logger.debug(f"Environment '{env_id}' loaded successfully")
         return wrapper
         
     except Exception as e:

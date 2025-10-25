@@ -52,7 +52,7 @@ class LocalBackend(AbstractBackend):
     def _start_container(self, **docker_kwargs) -> None:
         """Start Docker container with Ray cluster"""
         try:
-            logger.info(f"Starting container for image '{self.image}'")
+            logger.debug(f"Starting container for image '{self.image}'")
             
             # Initialize Docker manager
             self._docker_manager = DockerManager()
@@ -70,7 +70,7 @@ class LocalBackend(AbstractBackend):
             self._container = self._docker_manager.start_container(**container_config)
             
             # Wait for Ray to be ready
-            logger.info(f"Waiting for Ray cluster to start on port {self.ray_port}")
+            logger.debug(f"Waiting for Ray cluster to start on port {self.ray_port}")
             if not self._docker_manager.wait_for_port(
                 self._container,
                 self.ray_port,
@@ -81,7 +81,7 @@ class LocalBackend(AbstractBackend):
                     "Check container logs for errors."
                 )
             
-            logger.info("Container started and Ray cluster ready")
+            logger.debug("Container started and Ray cluster ready")
             
         except Exception as e:
             # Cleanup on failure
@@ -104,8 +104,6 @@ class LocalBackend(AbstractBackend):
             return
         
         try:
-            logger.info("Setting up Ray connection and Actor")
-            
             # Get Ray address
             ray_address = f"ray://127.0.0.1:{self.ray_port}"
             
@@ -123,7 +121,7 @@ class LocalBackend(AbstractBackend):
             )
             
             self._is_setup = True
-            logger.info("Backend setup completed")
+            logger.debug("Backend setup completed")
             
         except Exception as e:
             raise SetupError(f"Failed to setup backend: {e}")
@@ -181,7 +179,7 @@ class LocalBackend(AbstractBackend):
     
     def cleanup(self) -> None:
         """Stop container and disconnect Ray"""
-        logger.info(f"Cleaning up backend for container {self.container_name}")
+        logger.debug(f"Cleaning up backend for container {self.container_name}")
         
         # Disconnect Ray
         if self._ray_executor:
@@ -202,7 +200,7 @@ class LocalBackend(AbstractBackend):
                 self._container = None
         
         self._is_setup = False
-        logger.info("Backend cleanup completed")
+        logger.debug("Backend cleanup completed")
     
     def is_ready(self) -> bool:
         """

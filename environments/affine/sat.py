@@ -2,13 +2,16 @@
 
 import random
 import re
+from models import Challenge
 
 
 class SATTask:
     """SAT problem generator and evaluator"""
     
-    @staticmethod
-    def generate(n=15, k=10):
+    def __init__(self):
+        pass
+    
+    async def generate(self, n=15, k=10) -> Challenge:
         """Generate a satisfiable k-SAT problem"""
         m = int(4.26 * n)
         sol = {i: random.choice([True, False]) for i in range(1, n + 1)}
@@ -18,7 +21,7 @@ class SATTask:
             vs = random.sample(list(sol), k)
             sv = random.choice(vs)
             cls.append([
-                (v if sol[v] else -v) if v == sv 
+                (v if sol[v] else -v) if v == sv
                 else (v if random.choice([True, False]) else -v)
                 for v in vs
             ])
@@ -35,11 +38,16 @@ class SATTask:
             "or respond `UNSAT` if it has no solution."
         )
         
-        return prompt, sol, cls
+        return Challenge(
+            env="sat",
+            prompt=prompt,
+            extra={"solution": sol, "clauses": cls}
+        )
     
-    @staticmethod
-    def evaluate(response, cls):
+    async def evaluate(self, response: str, challenge: Challenge) -> float:
         """Evaluate SAT response"""
+        cls = challenge.extra.get("clauses", [])
+        
         got = {
             int(v): val.lower() in ("true", "1")
             for v, val in re.findall(r"x(\d+)=(True|False|1|0)", response or "")
