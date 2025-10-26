@@ -8,16 +8,6 @@ class AbstractBackend(ABC):
     """Base class for environment execution backends"""
     
     @abstractmethod
-    def setup(self, env_vars: Optional[Dict[str, str]] = None) -> None:
-        """
-        Initialize the environment with configuration
-        
-        Args:
-            env_vars: Environment variables to inject
-        """
-        pass
-    
-    @abstractmethod
     def call_method(self, method_name: str, *args, **kwargs) -> Any:
         """
         Call a method from the environment

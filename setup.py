@@ -15,7 +15,7 @@ long_description = readme_file.read_text() if readme_file.exists() else ""
 setup(
     name="rayfine-env",
     version=version["__version__"],
-    description="Container-based environment execution framework with Ray",
+    description="Container-based environment execution framework with HTTP",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Rayfine Team",
@@ -25,7 +25,7 @@ setup(
         "pyyaml>=6.0",
         "python-dotenv>=1.0.0",
         "docker>=7.0.0",
-        "ray[default]>=2.9.0",
+        "httpx>=0.27.0",
     ],
     extras_require={
         "dev": [

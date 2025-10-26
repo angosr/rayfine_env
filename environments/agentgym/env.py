@@ -82,7 +82,7 @@ def inject_evaluator_endpoint(app: FastAPI):
             logger.info("Evaluator endpoint already exists, skipping injection")
             return
 
-    @app.post("/evaluator", response_model=EvaluatorResponse)
+    @app.post("/evaluate", response_model=EvaluatorResponse)
     async def evaluate_model(request: EvaluatorRequest):
         """
         Evaluate a model on AgentGym tasks.

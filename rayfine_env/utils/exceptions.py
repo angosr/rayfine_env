@@ -36,6 +36,11 @@ class RayExecutionError(RayfineEnvError):
     pass
 
 
+class ExecutionError(RayfineEnvError):
+    """Remote execution failed"""
+    pass
+
+
 class BackendError(RayfineEnvError):
     """Backend operation failed"""
     pass

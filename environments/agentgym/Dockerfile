@@ -41,4 +41,4 @@ COPY env.py /app/
 COPY agentenv_webshop /app/AgentGym/agentenv-webshop/agentenv_webshop/
 
 WORKDIR /sandbox
-CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app", "--workers", "4"]
+CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app", "--workers", "1"]

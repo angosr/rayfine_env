@@ -10,14 +10,12 @@ Basic Usage:
     >>> build_image_from_env("environments/affine", "affine:latest")
     
     # Load and use environment
-    >>> env = load_env(image="affine:latest")
-    >>> env.setup(CHUTES_API_KEY="xxx")
+    >>> env = load_env(image="affine:latest", env_vars={"CHUTES_API_KEY": "xxx"})
     >>> result = env.evaluate(task_type="sat", num_samples=5)
     >>> env.cleanup()
     
     # Context manager (automatic cleanup)
-    >>> with load_env(image="affine:latest") as env:
-    ...     env.setup(CHUTES_API_KEY="xxx")
+    >>> with load_env(image="affine:latest", env_vars={"CHUTES_API_KEY": "xxx"}) as env:
     ...     result = env.evaluate(task_type="sat", num_samples=5)
 """
 

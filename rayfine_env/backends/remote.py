@@ -39,18 +39,6 @@ class RemoteBackend(AbstractBackend):
         logger.info(f"RemoteBackend initialized for environment '{environment_id}'")
         logger.warning("RemoteBackend is not yet implemented - this is a stub")
     
-    def setup(self, env_vars: Optional[Dict[str, str]] = None) -> None:
-        """
-        Initialize remote environment
-        
-        Args:
-            env_vars: Environment variables to inject
-        """
-        raise NotImplementedError(
-            "RemoteBackend is not yet implemented. "
-            "This feature will allow calling remote environments via API."
-        )
-    
     def call_method(self, method_name: str, *args, **kwargs) -> Any:
         """
         Call method via remote API

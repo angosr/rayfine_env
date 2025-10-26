@@ -16,8 +16,7 @@ class EnvironmentWrapper:
     all methods from the environment's env.py file.
     
     Example:
-        env = load_env(image="affine:latest")
-        env.setup(CHUTES_API_KEY="xxx")
+        env = load_env(image="affine:latest", env_vars={"CHUTES_API_KEY": "xxx"})
         result = env.evaluate(task_type="sat", num_samples=5)
         env.cleanup()
     """
@@ -35,37 +34,9 @@ class EnvironmentWrapper:
         """
         self._backend = backend
         self.name = backend.name
-        self._setup_called = False
-        logger.debug(f"Created EnvironmentWrapper '{self.name}'")
-    
-    def setup(self, **env_vars) -> None:
-        """
-        Initialize environment with configuration
-        
-        Args:
-            **env_vars: Environment variables as keyword arguments
-            
-        Example:
-            env.setup(CHUTES_API_KEY="xxx", DEBUG="true")
-        """
-        if self._setup_called:
-            logger.warning(f"Environment '{self.name}' already setup")
-            return
-        
-        try:
-            logger.debug(f"Setting up environment '{self.name}'")
-            
-            # Convert kwargs to dict of strings
-            env_vars_dict = {k: str(v) for k, v in env_vars.items()}
-            
-            # Call backend setup
-            self._backend.setup(env_vars=env_vars_dict)
-            self._setup_called = True
-            
-            logger.debug(f"Environment '{self.name}' setup completed")
-            
-        except Exception as e:
-            raise EnvironmentError(f"Failed to setup environment '{self.name}': {e}")
+        # Backend is ready immediately after initialization
+        self._is_ready = backend.is_ready()
+        logger.debug(f"Created EnvironmentWrapper '{self.name}' (ready: {self._is_ready})")
     
     def cleanup(self) -> None:
         """
@@ -77,7 +48,7 @@ class EnvironmentWrapper:
         try:
             logger.debug(f"Cleaning up environment '{self.name}'")
             self._backend.cleanup()
-            self._setup_called = False
+            self._is_ready = False
             logger.debug(f"Environment '{self.name}' cleaned up")
         except Exception as e:
             logger.error(f"Error during cleanup of '{self.name}': {e}")
@@ -89,9 +60,9 @@ class EnvironmentWrapper:
         Returns:
             List of method names that can be called
         """
-        if not self._setup_called:
+        if not self._is_ready:
             raise EnvironmentError(
-                f"Environment '{self.name}' not setup. Call setup() first."
+                f"Environment '{self.name}' not ready."
             )
         
         try:
@@ -104,9 +75,9 @@ class EnvironmentWrapper:
         Check if environment is ready for method calls
         
         Returns:
-            True if setup completed and backend ready
+            True if backend is ready
         """
-        return self._setup_called and self._backend.is_ready()
+        return self._is_ready and self._backend.is_ready()
     
     def __getattr__(self, name: str):
         """
@@ -130,10 +101,10 @@ class EnvironmentWrapper:
         if name.startswith('_'):
             raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
         
-        # Check if setup was called
-        if not self._setup_called:
+        # Check if environment is ready
+        if not self._is_ready:
             raise EnvironmentError(
-                f"Environment '{self.name}' not setup. Call setup() first."
+                f"Environment '{self.name}' not ready."
             )
         
         # Return a callable that will invoke the remote method
@@ -179,7 +150,7 @@ class EnvironmentWrapper:
     
     def __del__(self):
         """Cleanup on deletion"""
-        if self._setup_called:
+        if self._is_ready:
             self.cleanup()
     
     def __repr__(self) -> str:

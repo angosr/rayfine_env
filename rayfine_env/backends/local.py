@@ -1,11 +1,11 @@
-"""Local backend - Docker + Ray execution"""
+"""Local backend - Docker + HTTP execution"""
 
 import time
 from datetime import datetime
 from typing import Dict, Optional, Any
 
 from .base import AbstractBackend
-from ..infrastructure import DockerManager, RayExecutor
+from ..infrastructure import DockerManager, HTTPExecutor, EnvType
 from ..utils.exceptions import BackendError, SetupError
 from ..utils.logger import logger
 from ..utils.config import Config
@@ -13,20 +13,21 @@ from ..utils.config import Config
 
 class LocalBackend(AbstractBackend):
     """
-    Local execution backend using Docker containers and Ray
+    Local execution backend using Docker containers and HTTP
     
     Lifecycle:
-    1. __init__: Start Docker container with Ray cluster
-    2. setup(): Connect to Ray and create Actor with env vars
-    3. call_method(): Execute methods via Ray Actor
-    4. cleanup(): Stop container and disconnect Ray
+    1. __init__: Start Docker container with HTTP server
+    2. call_method(): Execute methods via HTTP API
+    3. cleanup(): Stop container
     """
     
     def __init__(
         self,
         image: str,
         container_name: Optional[str] = None,
-        ray_port: int = 10001,
+        http_port: int = 8000,
+        env_vars: Optional[Dict[str, str]] = None,
+        env_type_override: Optional[str] = None,
         **docker_kwargs
     ):
         """
@@ -35,36 +36,60 @@ class LocalBackend(AbstractBackend):
         Args:
             image: Docker image name
             container_name: Optional container name
-            ray_port: Ray client port
+            http_port: HTTP server port
+            env_vars: Environment variables to pass to container
+            env_type_override: Override environment type detection
             **docker_kwargs: Additional Docker container options
         """
         self.image = image
         # Generate human-readable timestamp: YYYYMMDD-HHMMSS
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.name = container_name or f"{image.replace(':', '-')}-{timestamp}"
-        self.ray_port = ray_port
+        self.http_port = http_port
         
         self._container = None
         self._docker_manager = None
-        self._ray_executor = None
+        self._http_executor = None
         self._is_setup = False
+        self._env_type = None
+        self._env_type_override = env_type_override
         
-        # Start container
-        self._start_container(**docker_kwargs)
+        # Start container with env vars
+        self._start_container(env_vars=env_vars, **docker_kwargs)
     
-    def _start_container(self, **docker_kwargs) -> None:
-        """Start Docker container with Ray cluster"""
+    def _start_container(self, env_vars: Optional[Dict[str, str]] = None, **docker_kwargs) -> None:
+        """Start Docker container with HTTP server
+        
+        Args:
+            env_vars: Environment variables to pass to container
+            **docker_kwargs: Additional Docker options
+        """
         try:
             logger.debug(f"Starting container for image '{self.image}'")
             
+            # Get environment type (use override if provided)
+            if self._env_type_override:
+                self._env_type = self._env_type_override
+                logger.info(f"Environment type (manual): {self._env_type}")
+            else:
+                self._env_type = self._get_env_type()
+                logger.info(f"Environment type (detected): {self._env_type}")
+            
             # Initialize Docker manager
             self._docker_manager = DockerManager()
+            
+            # Merge environment variables
+            if env_vars:
+                if "environment" in docker_kwargs:
+                    docker_kwargs["environment"].update(env_vars)
+                else:
+                    docker_kwargs["environment"] = env_vars
             
             # Prepare container configuration
             container_config = {
                 "image": self.image,
                 "name": self.name,
-                "ports": {self.ray_port: self.ray_port},  # Expose Ray client port
+                "ports": {self.http_port: self.http_port},  # Expose HTTP port
                 "detach": True,
                 "restart_policy": {"Name": "always"},  # Auto-restart on failure
                 **docker_kwargs
@@ -73,19 +98,26 @@ class LocalBackend(AbstractBackend):
             # Start container
             self._container = self._docker_manager.start_container(**container_config)
             
-            # Wait for Ray to be ready
-            logger.debug(f"Waiting for Ray cluster to start on port {self.ray_port}")
-            if not self._docker_manager.wait_for_port(
-                self._container,
-                self.ray_port,
-                timeout=Config.RAY_START_TIMEOUT
-            ):
+            # Create HTTP executor
+            self._http_executor = HTTPExecutor(
+                base_url=f"http://localhost:{self.http_port}",
+                env_type=self._env_type,
+                timeout=600
+            )
+            
+            # Wait for HTTP server to be ready
+            # http_based environments may take longer to start (loading dependencies)
+            timeout = 120 if self._env_type == EnvType.HTTP_BASED else 60
+            logger.debug(f"Waiting for HTTP server on port {self.http_port} (timeout={timeout}s)")
+            if not self._wait_for_http_ready(timeout=timeout):
                 raise BackendError(
-                    f"Ray cluster did not start within {Config.RAY_START_TIMEOUT}s. "
+                    f"HTTP server did not start within {timeout}s. "
                     "Check container logs for errors."
                 )
             
-            logger.debug("Container started and Ray cluster ready")
+            # Mark as setup - HTTP backend is ready after container starts
+            self._is_setup = True
+            logger.debug("Container started and HTTP server ready")
             
         except Exception as e:
             # Cleanup on failure
@@ -96,39 +128,31 @@ class LocalBackend(AbstractBackend):
                     pass
             raise BackendError(f"Failed to start container: {e}")
     
-    def setup(self, env_vars: Optional[Dict[str, str]] = None) -> None:
-        """
-        Connect to Ray and create Actor with environment variables
-        
-        Args:
-            env_vars: Environment variables to inject into Actor
-        """
-        if self._is_setup:
-            logger.warning("Backend already setup, skipping")
-            return
-        
+    def _get_env_type(self) -> str:
+        """Get environment type from image labels"""
         try:
-            # Get Ray address
-            ray_address = f"ray://127.0.0.1:{self.ray_port}"
-            
-            # Connect to Ray cluster
-            self._ray_executor = RayExecutor(
-                ray_address=ray_address,
-                connection_timeout=Config.RAY_CONNECTION_TIMEOUT
-            )
-            
-            # Create Actor with environment variables
-            actor_name = f"env_actor_{self.name}"
-            self._ray_executor.create_actor(
-                env_vars=env_vars,
-                actor_name=actor_name
-            )
-            
-            self._is_setup = True
-            logger.debug("Backend setup completed")
-            
+            from ..infrastructure import DockerManager
+            docker_mgr = DockerManager()
+            img = docker_mgr.client.images.get(self.image)
+            labels = img.labels or {}
+            env_type = labels.get("rayfine.env.type", EnvType.FUNCTION_BASED)
+            logger.debug(f"Detected env_type from image labels: {env_type}")
+            return env_type
         except Exception as e:
-            raise SetupError(f"Failed to setup backend: {e}")
+            logger.warning(f"Failed to get env type from image: {e}, defaulting to function_based")
+            return EnvType.FUNCTION_BASED
+    
+    def _wait_for_http_ready(self, timeout: int = 60) -> bool:
+        """Wait for HTTP server to be ready"""
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                if self._http_executor.health_check():
+                    return True
+            except Exception as e:
+                logger.debug(f"Health check failed: {e}")
+            time.sleep(1)
+        return False
     
     def call_method(
         self,
@@ -138,27 +162,21 @@ class LocalBackend(AbstractBackend):
         **kwargs
     ) -> Any:
         """
-        Call a method from env.py via Ray Actor
+        Call a method from env.py via HTTP
         
         Args:
             method_name: Method name to call
             *args: Positional arguments
-            timeout: Optional timeout in seconds
+            timeout: Optional timeout in seconds (not used currently)
             **kwargs: Keyword arguments
             
         Returns:
             Method result
         """
-        if not self._is_setup:
-            raise SetupError(
-                "Backend not setup. Call setup() before calling methods."
-            )
-        
         try:
-            return self._ray_executor.call_method(
+            return self._http_executor.call_method(
                 method_name,
                 *args,
-                timeout=timeout,
                 **kwargs
             )
         except Exception as e:
@@ -171,28 +189,23 @@ class LocalBackend(AbstractBackend):
         Returns:
             List of method names
         """
-        if not self._is_setup:
-            raise SetupError(
-                "Backend not setup. Call setup() before listing methods."
-            )
-        
         try:
-            return self._ray_executor.list_methods()
+            return self._http_executor.list_methods()
         except Exception as e:
             raise BackendError(f"Failed to list methods: {e}")
     
     def cleanup(self) -> None:
-        """Stop container and disconnect Ray"""
+        """Stop container and close HTTP client"""
         logger.debug(f"Cleaning up backend for container {self.name}")
         
-        # Disconnect Ray
-        if self._ray_executor:
+        # Close HTTP client
+        if self._http_executor:
             try:
-                self._ray_executor.disconnect()
+                self._http_executor.close()
             except Exception as e:
-                logger.warning(f"Error disconnecting Ray: {e}")
+                logger.warning(f"Error closing HTTP client: {e}")
             finally:
-                self._ray_executor = None
+                self._http_executor = None
         
         # Stop container
         if self._container and self._docker_manager:

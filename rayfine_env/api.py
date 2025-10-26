@@ -59,7 +59,9 @@ def load_env(
     image: str,
     mode: str = "local",
     container_name: Optional[str] = None,
-    ray_port: int = 10001,
+    http_port: int = 8000,
+    env_vars: Optional[Dict[str, str]] = None,
+    env_type: Optional[str] = None,
     **backend_kwargs
 ) -> EnvironmentWrapper:
     """
@@ -69,17 +71,28 @@ def load_env(
         image: Docker image name (for local mode) or environment ID (for remote mode)
         mode: Execution mode - "local" or "remote"
         container_name: Optional container name (local mode only)
-        ray_port: Ray client port (local mode only, default: 10001)
+        http_port: HTTP server port (local mode only, default: 8000)
+        env_vars: Environment variables to pass to container (local mode only)
+        env_type: Override environment type detection ("function_based" or "http_based")
         **backend_kwargs: Additional backend-specific parameters
         
     Returns:
         EnvironmentWrapper instance
         
     Example (local mode):
-        >>> env = load_env(image="affine:latest")
-        >>> env.setup(CHUTES_API_KEY="xxx")
+        >>> env = load_env(
+        ...     image="affine:latest",
+        ...     env_vars={"CHUTES_API_KEY": "xxx"}
+        ... )
         >>> result = env.evaluate(task_type="sat", num_samples=5)
         >>> env.cleanup()
+        
+    Example (local mode with manual env_type):
+        >>> env = load_env(
+        ...     image="agentgym:webshop",
+        ...     env_type="http_based",
+        ...     env_vars={"CHUTES_API_KEY": "xxx"}
+        ... )
         
     Example (remote mode - not yet implemented):
         >>> env = load_env(
@@ -98,7 +111,9 @@ def load_env(
             backend = LocalBackend(
                 image=image,
                 container_name=container_name,
-                ray_port=ray_port,
+                http_port=http_port,
+                env_vars=env_vars,
+                env_type_override=env_type,
                 **backend_kwargs
             )
         elif mode == "remote":
@@ -143,7 +158,7 @@ def cleanup_all_environments() -> None:
     """
     Clean up all active environments
     
-    Stops all containers, disconnects Ray, and frees resources.
+    Stops all containers and frees resources.
     Automatically called on program exit.
     
     Example:

@@ -17,11 +17,6 @@ async def main():
         }
     )
 
-    env = rf_env.load_env(
-        image=image_id,
-        mode="local"
-    )
-
     api_key = os.getenv("CHUTES_API_KEY")
     if not api_key:
         print("   ❌ CHUTES_API_KEY environment variable not set")
@@ -30,12 +25,16 @@ async def main():
         env.cleanup()
         sys.exit(1)
 
-    env.setup(CHUTES_API_KEY=api_key)
-    print("   ✓ Environment setup complete (Ray Actor created)")
-    
+    env = rf_env.load_env(
+        image="agentgym:webshop",
+        mode="local",
+        env_type="http_based",
+        env_vars={"CHUTES_API_KEY": api_key}
+    )
+
     # Run evaluation
     print("\nRunning evaluation...")
-    result = await env.evaluate(
+    result = env.evaluate(
         model="deepseek-ai/DeepSeek-V3",
         base_url="https://llm.chutes.ai/v1",
         temperature=0.7,
@@ -58,6 +57,7 @@ async def main():
             print(f"  Sample {detail['id']}: ERROR - {detail['error']}")
         else:
             print(f"  Sample {detail['id']}: reward={detail['reward']:.3f}, success={detail['success']}")
+            print(f"  Experiences {detail['experiences']}")
 
 if __name__ == "__main__":
     asyncio.run(main())

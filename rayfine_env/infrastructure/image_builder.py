@@ -2,11 +2,14 @@
 
 import docker
 import importlib.util
+import tempfile
+import shutil
 from pathlib import Path
 from typing import Optional
 
 from ..utils.exceptions import ImageBuildError, ValidationError
 from ..utils.logger import logger
+from .env_detector import EnvDetector, EnvType
 
 
 class ImageBuilder:
@@ -28,7 +31,13 @@ class ImageBuilder:
         buildargs: Optional[dict] = None
     ) -> str:
         """
-        Build Docker image from environment directory
+        Build Docker image from environment directory with automatic server injection
+        
+        Process:
+        1. Detect environment type (function_based vs http_based)
+        2. Build base image from user's Dockerfile
+        3. If function_based: perform two-stage build to inject HTTP server
+        4. Save environment metadata to image labels
         
         Expected directory structure:
             env_path/
@@ -42,10 +51,10 @@ class ImageBuilder:
             image_tag: Image tag (e.g., "affine:latest")
             nocache: Don't use build cache
             quiet: Suppress build output
-            buildargs: Docker build arguments (e.g., {"ENV_NAME": "webshop", "TOOL_NAME": "webshop"})
+            buildargs: Docker build arguments (e.g., {"ENV_NAME": "webshop"})
             
         Returns:
-            Built image ID
+            Built image tag
         """
         env_path = Path(env_path).resolve()
         
@@ -65,29 +74,87 @@ class ImageBuilder:
         if not dockerfile_path.exists():
             raise ValidationError(
                 f"Missing required Dockerfile in {env_path}. "
-                "Every environment must have a Dockerfile. "
-                "See environments/affine/Dockerfile for example."
+                "Every environment must have a Dockerfile."
             )
         
-        logger.info(f"Using Dockerfile from {dockerfile_path}")
+        # Step 1: Detect environment type
+        logger.info("Detecting environment type...")
+        env_config = EnvDetector.detect(str(env_path))
+        logger.info(f"Environment type: {env_config.env_type}")
         
         # Auto-resolve buildargs using config.py if exists
         config_path = env_path / "config.py"
         if config_path.exists() and buildargs:
             buildargs = self._resolve_buildargs(config_path, buildargs)
         
-        # Build image
+        # Step 2: Build base image
+        base_image_tag = f"{image_tag}-base" if env_config.env_type == EnvType.FUNCTION_BASED else image_tag
+        logger.info(f"Building base image '{base_image_tag}' from {env_path}")
+        
         try:
-            logger.info(f"Building image '{image_tag}' from {env_path}")
+            base_image_id = self._build_image(
+                context_path=str(env_path),
+                tag=base_image_tag,
+                dockerfile="Dockerfile",
+                buildargs=buildargs,
+                nocache=nocache,
+                quiet=quiet
+            )
+            logger.info(f"Base image built: {base_image_tag}")
             
+        except Exception as e:
+            raise ImageBuildError(f"Failed to build base image: {e}")
+        
+        # Step 3: Two-stage build for function_based environments
+        if env_config.env_type == EnvType.FUNCTION_BASED:
+            logger.info("Performing two-stage build to inject HTTP server...")
+            final_image_id = self._inject_http_server(
+                base_image_tag=base_image_tag,
+                final_tag=image_tag,
+                nocache=nocache,
+                quiet=quiet
+            )
+        else:
+            final_image_id = base_image_id
+        
+        # Step 4: Save metadata
+        self._save_metadata(image_tag, env_config)
+        
+        logger.info(f"Successfully built image '{image_tag}'")
+        return image_tag
+    
+    def _build_image(
+        self,
+        context_path: str,
+        tag: str,
+        dockerfile: str,
+        buildargs: Optional[dict],
+        nocache: bool,
+        quiet: bool
+    ) -> str:
+        """
+        Build Docker image and return image ID
+        
+        Args:
+            context_path: Build context path
+            tag: Image tag
+            dockerfile: Dockerfile name
+            buildargs: Build arguments
+            nocache: Don't use cache
+            quiet: Suppress output
+            
+        Returns:
+            Image ID
+        """
+        try:
             if buildargs:
-                logger.info(f"Using build args: {buildargs}")
+                logger.debug(f"Using build args: {buildargs}")
             
             # Stream build output in real-time
             build_logs = self.client.api.build(
-                path=str(env_path),
-                tag=image_tag,
-                dockerfile="Dockerfile",
+                path=context_path,
+                tag=tag,
+                dockerfile=dockerfile,
                 buildargs=buildargs or {},
                 nocache=nocache,
                 rm=True,
@@ -107,9 +174,7 @@ class ImageBuilder:
             if not image_id:
                 raise ImageBuildError("Build completed but no image ID returned")
             
-            image = self.client.images.get(image_id)
-            logger.info(f"Successfully built image '{image_tag}' ({image.short_id})")
-            return image_tag
+            return image_id
             
         except docker.errors.BuildError as e:
             error_msg = "Image build failed:\n"
@@ -119,8 +184,79 @@ class ImageBuilder:
                 elif "stream" in log:
                     error_msg += f"  {log['stream']}"
             raise ImageBuildError(error_msg)
+    
+    def _inject_http_server(
+        self,
+        base_image_tag: str,
+        final_tag: str,
+        nocache: bool,
+        quiet: bool
+    ) -> str:
+        """
+        Inject HTTP server into base image using two-stage build
+        
+        Creates a temporary build context with:
+        - http_wrapper.Dockerfile (FROM base_image)
+        - http_server.py (server template)
+        
+        Args:
+            base_image_tag: Base image tag
+            final_tag: Final image tag
+            nocache: Don't use cache
+            quiet: Suppress output
+            
+        Returns:
+            Final image ID
+        """
+        # Create temporary build context
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            
+            # Get template directory
+            template_dir = Path(__file__).parent.parent / "templates"
+            
+            # Copy HTTP server template
+            server_template = template_dir / "http_server.py"
+            shutil.copy2(server_template, tmpdir_path / "http_server.py")
+            
+            # Copy wrapper Dockerfile
+            wrapper_dockerfile = template_dir / "http_wrapper.Dockerfile"
+            shutil.copy2(wrapper_dockerfile, tmpdir_path / "Dockerfile")
+            
+            logger.debug(f"Two-stage build context created in {tmpdir}")
+            
+            # Build final image with base image as build arg
+            image_id = self._build_image(
+                context_path=tmpdir,
+                tag=final_tag,
+                dockerfile="Dockerfile",
+                buildargs={"BASE_IMAGE": base_image_tag},
+                nocache=nocache,
+                quiet=quiet
+            )
+            
+            logger.info(f"HTTP server injected successfully")
+            return image_id
+    
+    def _save_metadata(self, image_tag: str, env_config) -> None:
+        """
+        Save environment metadata to image labels
+        
+        Note: Docker Python SDK doesn't support adding labels via tag() method.
+        Metadata is stored in image config during build process instead.
+        
+        Args:
+            image_tag: Image tag
+            env_config: Environment configuration
+        """
+        # Docker SDK's image.tag() doesn't support labels parameter
+        # Labels should be set during build using LABEL instruction in Dockerfile
+        # For now, we just verify the image exists
+        try:
+            image = self.client.images.get(image_tag)
+            logger.debug(f"Image {image_tag} exists (type: {env_config.env_type})")
         except Exception as e:
-            raise ImageBuildError(f"Failed to build image: {e}")
+            logger.warning(f"Failed to verify image: {e}")
     
     def _resolve_buildargs(self, config_path: Path, buildargs: dict) -> dict:
         """

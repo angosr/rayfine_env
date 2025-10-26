@@ -1,18 +1,21 @@
 # Rayfine-Env
 
-Container-based environment execution framework with Ray-based distributed computing.
+Container-based environment execution framework with HTTP-based communication.
 
-Define environments once, execute anywhere with Docker + Ray.
+Define environments once, execute anywhere with Docker + HTTP.
 
 ## Features
 
 - **Simple Environment Definition**: Only requires `env.py` file
 - **Container Isolation**: All environments run in isolated Docker containers
-- **Ray Integration**: Distributed computing with remote Actor execution
+- **HTTP Communication**: Language-agnostic REST API for cross-version compatibility
+- **Two Environment Types**: 
+  - Function-based (auto-injected HTTP server)
+  - HTTP-based (existing FastAPI servers)
 - **Dynamic Method Dispatch**: Automatic method exposure via `__getattr__`
 - **Multi-Environment Support**: Run multiple environments concurrently
-- **Backend Abstraction**: Local (Docker+Ray) and Remote (API) modes
-- **Clean Separation**: Environment variables injected at setup, not container start
+- **Backend Abstraction**: Local (Docker+HTTP) and Remote (API) modes
+- **Zero Burden**: Environment developers only write business logic
 
 ## Quick Start
 
@@ -25,14 +28,20 @@ Create an environment directory with `env.py`:
 import os
 
 class Actor:
-    """Optional Actor class for structured environments"""
+    """Actor class for structured environments"""
     
     def __init__(self):
         self.api_key = os.getenv("CHUTES_API_KEY")
+        if not self.api_key:
+            raise ValueError("CHUTES_API_KEY not set")
     
     async def evaluate(self, task_type="sat", num_samples=1, **kwargs):
         # Your implementation
-        return {"task_name": task_type, "total_score": 1.0}
+        return {
+            "task_name": task_type, 
+            "total_score": 1.0,
+            "samples": num_samples
+        }
 
 # Or define module-level functions (simpler approach)
 async def evaluate(task_type="sat", num_samples=1, **kwargs):
@@ -41,42 +50,43 @@ async def evaluate(task_type="sat", num_samples=1, **kwargs):
     return {"task_name": task_type, "total_score": 1.0}
 ```
 
-Optional `Dockerfile` (auto-generated if not provided):
+Optional [`Dockerfile`](environments/affine/Dockerfile) (base image for dependencies):
 
 ```dockerfile
 # environments/affine/Dockerfile
-FROM rayproject/ray:latest
+FROM rayproject/ray:2.40.0-py312
 WORKDIR /app
-COPY . /app/
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-EXPOSE 10001
-CMD ["ray", "start", "--head", "--port=6379", "--dashboard-host=0.0.0.0", "--block"]
+COPY . /app/
 ```
 
 ### 2. Build Image
 
 ```python
-from rayfine_env import build_image_from_env
+import rayfine_env as rf_env
 
 # Build Docker image from environment directory
-image_id = build_image_from_env(
+image_id = rf_env.build_image_from_env(
     env_path="environments/affine",
     image_tag="affine:latest"
 )
+# HTTP server is automatically injected for function-based environments
 ```
 
 ### 3. Load and Execute
 
 ```python
-from rayfine_env import load_env
+import rayfine_env as rf_env
 
-# Load environment (starts container)
-env = load_env(image="affine:latest", mode="local")
+# Load environment (starts container with env vars)
+env = rf_env.load_env(
+    image="affine:latest",
+    mode="local",
+    env_vars={"CHUTES_API_KEY": "your-api-key"}
+)
 
-# Setup with environment variables
-env.setup(CHUTES_API_KEY="your-api-key")
-
-# Execute methods dynamically
+# Execute methods dynamically (no setup() needed)
 result = env.evaluate(task_type="sat", num_samples=5)
 
 # Cleanup
@@ -86,50 +96,60 @@ env.cleanup()
 ### 4. Context Manager (Auto-cleanup)
 
 ```python
-with load_env(image="affine:latest") as env:
-    env.setup(CHUTES_API_KEY="xxx")
+with rf_env.load_env(
+    image="affine:latest",
+    env_vars={"CHUTES_API_KEY": "xxx"}
+) as env:
     result = env.evaluate(task_type="sat", num_samples=5)
 # Container automatically cleaned up
 ```
 
 ## API Reference
 
-### `build_image_from_env()`
+### [`build_image_from_env()`](rayfine_env/api.py)
 
 Build Docker image from environment directory.
 
 ```python
-build_image_from_env(
+rf_env.build_image_from_env(
     env_path: str,                          # Path to environment directory
     image_tag: str,                         # Image tag (e.g., "affine:latest")
-    base_image: str = "rayproject/ray:latest",  # Base image
     nocache: bool = False,                  # Don't use build cache
-    quiet: bool = False                     # Suppress build output
-) -> str  # Returns image ID
+    quiet: bool = False,                    # Suppress build output
+    buildargs: Dict[str, str] = None        # Docker build arguments
+) -> str  # Returns image tag
 ```
 
 **Requirements:**
 - `env_path` must contain `env.py` file
 - Optional: `Dockerfile`, `requirements.txt`, other Python files
 
-### `load_env()`
+**Behavior:**
+- Detects environment type (function-based or http-based)
+- For function-based: Builds base image, then injects HTTP server (two-stage build)
+- For http-based: Uses existing Dockerfile as-is
+
+### [`load_env()`](rayfine_env/api.py)
 
 Load environment from pre-built Docker image.
 
 ```python
-load_env(
-    image: str,                  # Docker image name
-    mode: str = "local",         # "local" or "remote"
-    container_name: str = None,  # Optional container name
-    ray_port: int = 10001,       # Ray client port
-    **kwargs                     # Additional backend options
+rf_env.load_env(
+    image: str,                     # Docker image name
+    mode: str = "local",            # "local" or "remote"
+    container_name: str = None,     # Optional container name
+    http_port: int = 8000,          # HTTP server port
+    env_vars: Dict[str, str] = None,# Environment variables
+    env_type: str = None,           # Override type detection
+    **kwargs                        # Additional backend options
 ) -> EnvironmentWrapper
 ```
+
+**Important:** Environment variables should be passed via `env_vars` parameter, not `setup()`.
 
 ### EnvironmentWrapper Methods
 
 ```python
-env.setup(**env_vars)           # Initialize with environment variables
 env.cleanup()                   # Stop container and cleanup
 env.list_methods()              # List available methods
 env.is_ready()                  # Check if ready for execution
@@ -139,76 +159,267 @@ env.<method_name>(**kwargs)     # Call any method from env.py
 ### Utility Functions
 
 ```python
-list_active_environments()      # List all active environment IDs
-cleanup_all_environments()      # Cleanup all environments (auto on exit)
-get_environment(env_id)         # Get environment by ID
+rf_env.list_active_environments()      # List all active environment IDs
+rf_env.cleanup_all_environments()      # Cleanup all environments (auto on exit)
+rf_env.get_environment(env_id)         # Get environment by ID
 ```
 
 ## Architecture
 
+### System Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      User Application                        │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  import rayfine_env as rf_env                          │ │
+│  │  env = rf_env.load_env("affine:latest")                │ │
+│  │  result = env.evaluate(...)                            │ │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Rayfine-Env Framework                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │  API Layer   │  │ Core Layer   │  │  Backend     │      │
+│  │  - build_*   │→ │ - Wrapper    │→ │  - Local     │      │
+│  │  - load_env  │  │ - Registry   │  │  - Remote    │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│                           │                   │              │
+│  ┌──────────────┐        │                   │              │
+│  │Infrastructure│◄───────┘                   │              │
+│  │- ImageBuilder│                            │              │
+│  │- EnvDetector │                            │              │
+│  │- HTTPExecutor│◄───────────────────────────┘              │
+│  └──────────────┘                                            │
+└─────────────────────────────────────────────────────────────┘
+                           │
+                           ▼ HTTP (port 8000)
+┌─────────────────────────────────────────────────────────────┐
+│                   Docker Container                           │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │              HTTP Server (Uvicorn)                     │ │
+│  │  - GET  /health                                        │ │
+│  │  - GET  /methods                                       │ │
+│  │  - POST /call  {"method": "evaluate", "args": [...]}   │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │              User's env.py                             │ │
+│  │  class Actor:                                          │ │
+│  │      def __init__(self): ...                           │ │
+│  │      async def evaluate(self, ...): ...                │ │
+│  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Module Structure
+
 ```
 rayfine_env/
-├── __init__.py          # Public API exports
-├── __version__.py       # Version info
-├── api.py               # Main API functions
-├── utils/               # Utilities layer
-│   ├── exceptions.py    # Custom exceptions
-│   ├── logger.py        # Centralized logging
-│   └── config.py        # Configuration
-├── infrastructure/      # Infrastructure layer
-│   ├── docker_manager.py   # Docker container management
-│   ├── ray_executor.py     # Ray cluster connection
-│   └── image_builder.py    # Image building
-├── backends/            # Backend layer
-│   ├── base.py          # Abstract backend interface
-│   ├── local.py         # Local Docker+Ray backend
-│   └── remote.py        # Remote API backend (stub)
-└── core/                # Core layer
-    ├── registry.py      # Environment registry
-    └── wrapper.py       # Environment wrapper
+├── __init__.py              # Public API exports
+├── __version__.py           # Version info
+├── api.py                   # Main API functions
+│
+├── utils/                   # Utilities layer
+│   ├── exceptions.py        # Custom exceptions
+│   ├── logger.py            # Centralized logging
+│   └── config.py            # Configuration
+│
+├── infrastructure/          # Infrastructure layer
+│   ├── docker_manager.py    # Docker container management
+│   ├── http_executor.py     # HTTP-based remote execution
+│   ├── env_detector.py      # Environment type detection
+│   └── image_builder.py     # Two-stage image building
+│
+├── backends/                # Backend layer
+│   ├── base.py              # Abstract backend interface
+│   ├── local.py             # Local Docker+HTTP backend
+│   └── remote.py            # Remote API backend (stub)
+│
+├── core/                    # Core layer
+│   ├── registry.py          # Environment registry
+│   └── wrapper.py           # Environment wrapper
+│
+└── templates/               # Template files
+    ├── http_server.py       # Auto-injected HTTP server
+    └── http_wrapper.Dockerfile  # Two-stage build Dockerfile
 ```
 
 ## How It Works
 
+### Two-Stage Build Process
+
+For **function-based** environments:
+
+```
+Stage 1: Build base image
+  └─> User's Dockerfile → affine:latest-base
+
+Stage 2: Inject HTTP server
+  └─> FROM affine:latest-base
+      COPY http_server.py → /app/_rayfine/server.py
+      CMD uvicorn _rayfine.server:app → affine:latest
+```
+
+For **http-based** environments (existing FastAPI):
+```
+Single stage: Use Dockerfile as-is
+  └─> User's Dockerfile → agentgym:webshop
+      (Already contains FastAPI server)
+```
+
 ### Execution Flow
 
 1. **Build Phase** (once):
-   - Parse environment directory
-   - Generate Dockerfile if needed
-   - Build Docker image with Ray
+   - Detect environment type ([`EnvDetector`](rayfine_env/infrastructure/env_detector.py))
+   - Build base image (if function-based)
+   - Inject HTTP server template (if function-based)
+   - Tag final image with metadata
 
 2. **Load Phase**:
-   - Start Docker container
-   - Wait for Ray cluster to be ready
-   - Return EnvironmentWrapper
+   - Start Docker container with env vars
+   - Wait for HTTP server health check
+   - Return [`EnvironmentWrapper`](rayfine_env/core/wrapper.py)
 
-3. **Setup Phase**:
-   - Connect to Ray cluster
-   - Create Ray Actor with environment variables
-   - Actor loads `/app/env.py` module
-
-4. **Execution Phase**:
-   - Method calls → Ray Actor → User's env.py
+3. **Execution Phase**:
+   - Method calls → [`HTTPExecutor`](rayfine_env/infrastructure/http_executor.py) → Container HTTP API
    - Results returned to caller
 
-5. **Cleanup Phase**:
-   - Disconnect Ray
+4. **Cleanup Phase**:
+   - Close HTTP client
    - Stop and remove container
 
-### Multi-Environment Support
+### Environment Type Detection
+
+```python
+# rayfine_env/infrastructure/env_detector.py
+
+def detect(env_path: str) -> str:
+    """
+    Returns:
+      - EnvType.FUNCTION_BASED: Has Actor class or module functions
+      - EnvType.HTTP_BASED: Has FastAPI app in env.py or CMD with uvicorn
+    """
+```
+
+### HTTP Communication
+
+**Function-based** environment endpoints:
+```
+POST /call
+{
+  "method": "evaluate",
+  "args": [1, 2, 3],
+  "kwargs": {"key": "value"}
+}
+
+GET /methods → {"methods": ["evaluate", "process", ...]}
+GET /health → "ok"
+```
+
+**HTTP-based** environment:
+- Direct FastAPI routes (e.g., `POST /evaluator`)
+- Framework calls user's existing endpoints
+
+## Environment Types
+
+### Function-Based (Recommended)
+
+**Definition:**
+```python
+# env.py
+class Actor:
+    def __init__(self):
+        self.api_key = os.getenv("API_KEY")
+    
+    async def evaluate(self, **kwargs):
+        return {"result": "success"}
+```
+
+**Dockerfile:**
+```dockerfile
+FROM rayproject/ray:2.40.0-py312
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . /app/
+# No CMD needed - HTTP server auto-injected
+```
+
+**Characteristics:**
+- Framework auto-injects HTTP server
+- Zero HTTP code required
+- Lazy Actor initialization (env vars available at runtime)
+
+### HTTP-Based (Advanced)
+
+**Definition:**
+```python
+# env.py
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.post("/evaluate")
+async def evaluate(request: EvalRequest):
+    return {"result": "success"}
+```
+
+**Dockerfile:**
+```dockerfile
+FROM python:3.9
+WORKDIR /app
+COPY . /app/
+RUN pip install fastapi uvicorn
+CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**Characteristics:**
+- Full control over HTTP server
+- Can use existing FastAPI applications
+- Suitable for complex services
+
+## Examples
+
+### Basic Function-Based Environment
+
+```bash
+python examples/build_image.py    # Build affine:latest
+python examples/evaluate.py       # Run evaluation
+```
+
+### HTTP-Based Environment
+
+```python
+# Manual env_type override for images without metadata
+env = rf_env.load_env(
+    image="agentgym:webshop",
+    env_type="http_based",  # Override detection
+    env_vars={"CHUTES_API_KEY": "xxx"}
+)
+```
+
+## Multi-Environment Support
 
 Each environment gets:
 - Independent Docker container
-- Independent Ray cluster
+- Independent HTTP server
 - Isolated execution context
+- Independent environment variables
 
 ```python
 # Run multiple environments concurrently
-env1 = load_env(image="affine:latest")
-env2 = load_env(image="custom:v1")
-
-env1.setup(API_KEY="key1")
-env2.setup(API_KEY="key2")
+env1 = rf_env.load_env(
+    image="affine:latest",
+    env_vars={"API_KEY": "key1"}
+)
+env2 = rf_env.load_env(
+    image="custom:v1",
+    env_vars={"API_KEY": "key2"}
+)
 
 # Execute concurrently
 result1 = env1.evaluate(...)
@@ -223,7 +434,7 @@ env2.cleanup()
 
 - Python 3.8+
 - Docker daemon running
-- Ray 2.9+ (auto-installed)
+- httpx>=0.27.0 (auto-installed)
 
 ## Installation
 
@@ -231,78 +442,79 @@ env2.cleanup()
 # Install from source
 pip install -e .
 
-# Or install from PyPI (when published)
-pip install rayfine-env
+# Or install dependencies
+pip install -r requirements.txt
 ```
 
 ## Backend Modes
 
-### Local Mode (Docker + Ray)
+### Local Mode (Docker + HTTP)
 - Free and open-source
 - Full control over containers
-- Good for development and testing
+- Good for development and production
 
 ### Remote Mode (API) - Coming Soon
 - Managed service
 - No local Docker required
 - Pay-per-use pricing
 
-## Examples
+## Key Design Decisions
 
-See `example.py` and `test/example.py` for complete examples.
+### Why HTTP over Ray?
 
-### Build Example
+| Aspect | Ray | HTTP |
+|--------|-----|------|
+| Python version | Must match exactly | Any version |
+| Serialization | Ray-specific | Language-agnostic JSON |
+| Complexity | Cluster management | Simple REST API |
+| Dependencies | Ray SDK required | Standard httpx |
+| Debugging | Difficult | Standard HTTP logs |
 
-```bash
-$ python example.py
-```
+### Why Two-Stage Build?
 
-### Runtime Example
+- **Clean separation**: Base image (dependencies) + Server layer (framework)
+- **Zero burden**: Environment developers don't write HTTP code
+- **Maintainability**: HTTP server updates don't require image rebuilds
+- **Elegance**: `FROM affine:latest-base` vs concatenating Dockerfiles
 
-```bash
-$ python test/example.py
-```
+## Troubleshooting
 
-## Environment Definition Guide
-
-### Minimal Example (Function-based)
-
-```python
-# env.py
-def hello(name="World"):
-    return f"Hello, {name}!"
-```
-
-### Actor-based Example
+### Container startup timeout
 
 ```python
-# env.py
-import os
-
-class Actor:
-    def __init__(self):
-        self.config = os.getenv("MY_CONFIG")
-    
-    def process(self, data):
-        return {"processed": data, "config": self.config}
+# Increase health check timeout (default 60s)
+env = rf_env.load_env(image="slow:latest")
+# If container takes >60s to start, check:
+# 1. Docker logs: docker logs <container_name>
+# 2. Image CMD starts HTTP server on port 8000
+# 3. /health endpoint is accessible
 ```
 
-### Mixed Example
+### Environment type detection
 
 ```python
-# env.py
-class Actor:
-    def method_a(self):
-        return "from Actor"
+# Manually override if detection fails
+env = rf_env.load_env(
+    image="my:image",
+    env_type="http_based"  # or "function_based"
+)
+```
 
-def method_b():
-    return "from module"
+### Method not found
 
-# Both methods are available:
-# env.method_a()  → calls Actor().method_a()
-# env.method_b()  → calls method_b()
+```python
+# List available methods
+methods = env.list_methods()
+print(methods)
 ```
 
 ## License
 
 MIT
+
+## Contributing
+
+Contributions welcome! Please ensure:
+- Code follows existing patterns
+- Tests pass (when available)
+- Documentation is updated

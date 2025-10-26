@@ -5,8 +5,8 @@ python-dotenv>=1.0.0
 # Docker support for containerized environments
 docker>=7.0.0
 
-# Ray for local execution (pinned to 2.10.0 for Python 3.8 compatibility in containers)
-ray[default]==2.10.0
+# HTTP client for communication with containers
+httpx>=0.27.0
 
 # Note: rayfine must be installed separately from crates/rayfine-python for remote execution
 # cd ../crates/rayfine-python && maturin develop --release

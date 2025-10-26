@@ -51,7 +51,7 @@ def resolve_buildargs(buildargs: dict) -> dict:
     
     # Python 3.8 environments
     if env_name in ["webshop", "sciworld"]:
-        base_image = "python:3.9-slim"
+        base_image = "python:3.8-slim"
     
     # Tool environments (academia, movie, sheet, todo, weather)
     elif env_name in ["academia", "movie", "sheet", "todo", "weather"]:
