@@ -9,7 +9,7 @@ load_dotenv(override=True)
 
 async def main():
     # Setup environment with build args
-    image_id = rf_env.build_image_from_env(
+    rf_env.build_image_from_env(
         env_path="environments/agentgym",
         image_tag="agentgym:webshop",
         buildargs={

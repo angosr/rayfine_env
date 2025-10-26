@@ -53,12 +53,15 @@ class EnvironmentWrapper:
         except Exception as e:
             logger.error(f"Error during cleanup of '{self.name}': {e}")
     
-    def list_methods(self) -> list:
+    def list_methods(self, print_info: bool = True) -> list:
         """
         List all available methods in the environment
         
+        Args:
+            print_info: If True, print formatted method information
+        
         Returns:
-            List of method names that can be called
+            List of method information (format depends on environment type)
         """
         if not self._is_ready:
             raise EnvironmentError(
@@ -66,9 +69,100 @@ class EnvironmentWrapper:
             )
         
         try:
-            return self._backend.list_methods()
+            methods = self._backend.list_methods()
+            
+            if print_info:
+                self._print_method_info(methods)
+            
+            return methods
         except Exception as e:
             raise EnvironmentError(f"Failed to list methods: {e}")
+    
+    def _print_method_info(self, methods: list) -> None:
+        """Print formatted method information"""
+        if not methods:
+            print("No methods available")
+            return
+        
+        # Check if it's function_based or http_based format
+        if isinstance(methods[0], dict):
+            if "path" in methods[0]:
+                # http_based: OpenAPI endpoints
+                self._print_http_methods(methods)
+            else:
+                # function_based: function signatures
+                self._print_function_methods(methods)
+        else:
+            # Fallback: simple list
+            print("\nAvailable methods:")
+            for method in methods:
+                print(f"  - {method}")
+    
+    def _print_function_methods(self, methods: list) -> None:
+        """Print function-based methods with signatures"""
+        print("\n" + "="*60)
+        print("Available Methods (function_based)")
+        print("="*60)
+        
+        # Group by source
+        actor_methods = [m for m in methods if m.get("source") == "Actor"]
+        module_methods = [m for m in methods if m.get("source") == "module"]
+        
+        if actor_methods:
+            print("\nActor Methods:")
+            for method in actor_methods:
+                sig = method.get("signature", "(...)")
+                print(f"  env.{method['name']}{sig}")
+        
+        if module_methods:
+            print("\nModule Functions:")
+            for method in module_methods:
+                sig = method.get("signature", "(...)")
+                print(f"  env.{method['name']}{sig}")
+        
+        print("\n" + "="*60)
+    
+    def _print_http_methods(self, methods: list) -> None:
+        """Print HTTP-based methods with endpoint details"""
+        print("\n" + "="*60)
+        print("Available Endpoints (http_based)")
+        print("="*60)
+        
+        for endpoint in methods:
+            path = endpoint.get("path", "")
+            method = endpoint.get("method", "GET")
+            summary = endpoint.get("summary", "")
+            description = endpoint.get("description", "")
+            params = endpoint.get("parameters", [])
+            
+            print(f"\n{method} {path}")
+            if summary:
+                print(f"  Summary: {summary}")
+            if description and description != summary:
+                print(f"  Description: {description}")
+            
+            if params:
+                # Group by parameter location
+                query_params = [p for p in params if p.get("in") == "query"]
+                body_params = [p for p in params if p.get("in") == "body"]
+                
+                if query_params:
+                    print("  Query Parameters:")
+                    for p in query_params:
+                        required = " (required)" if p.get("required") else " (optional)"
+                        ptype = p.get("type", "unknown")
+                        print(f"    - {p['name']}: {ptype}{required}")
+                
+                if body_params:
+                    print("  Request Body:")
+                    for p in body_params:
+                        required = " (required)" if p.get("required") else " (optional)"
+                        ptype = p.get("type", "unknown")
+                        default = p.get("default")
+                        default_str = f" = {default}" if default is not None else ""
+                        print(f"    - {p['name']}: {ptype}{required}{default_str}")
+        
+        print("\n" + "="*60)
     
     def is_ready(self) -> bool:
         """

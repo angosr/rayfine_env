@@ -91,19 +91,54 @@ async def call_method(call: MethodCall):
 
 @app.get("/methods")
 async def list_methods():
-    """List available methods"""
+    """List available methods with signatures"""
     methods = []
-    if user_actor:
-        methods.extend([
-            m for m in dir(user_actor) 
-            if not m.startswith('_') and callable(getattr(user_actor, m))
-        ])
+    
+    # Get Actor methods (from class definition, not instance)
+    if user_module and hasattr(user_module, "Actor"):
+        actor_class = getattr(user_module, "Actor")
+        for name in dir(actor_class):
+            if name.startswith('_'):
+                continue
+            attr = getattr(actor_class, name)
+            if callable(attr):
+                try:
+                    sig = inspect.signature(attr)
+                    methods.append({
+                        "name": name,
+                        "signature": str(sig),
+                        "source": "Actor"
+                    })
+                except Exception:
+                    methods.append({
+                        "name": name,
+                        "signature": "(...)",
+                        "source": "Actor"
+                    })
+    
+    # Get module-level functions
     if user_module:
-        methods.extend([
-            m for m in dir(user_module) 
-            if not m.startswith('_') and callable(getattr(user_module, m))
-        ])
-    return {"methods": sorted(set(methods))}
+        for name in dir(user_module):
+            if name.startswith('_'):
+                continue
+            attr = getattr(user_module, name)
+            # Only include functions, not classes
+            if callable(attr) and not inspect.isclass(attr):
+                try:
+                    sig = inspect.signature(attr)
+                    methods.append({
+                        "name": name,
+                        "signature": str(sig),
+                        "source": "module"
+                    })
+                except Exception:
+                    methods.append({
+                        "name": name,
+                        "signature": "(...)",
+                        "source": "module"
+                    })
+    
+    return {"methods": methods}
 
 
 @app.get("/health")

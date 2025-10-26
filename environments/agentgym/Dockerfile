@@ -41,4 +41,8 @@ COPY env.py /app/
 COPY agentenv_webshop /app/AgentGym/agentenv-webshop/agentenv_webshop/
 
 WORKDIR /sandbox
-CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app", "--workers", "1"]
+# IMPORTANT: Must use single worker mode (no --workers or --workers 1)
+# Reason: AgentGym evaluator creates stateful agents that callback to the same server
+# Multiple workers would cause requests to be routed to different processes, losing state
+# For better performance within single process, use asyncio event loop
+CMD ["uvicorn", "env:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app", "--loop", "asyncio", "--workers", "1"]

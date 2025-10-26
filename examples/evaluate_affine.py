@@ -18,7 +18,13 @@ def main():
     print("Rayfine-Env: Environment Execution Example")
     print("=" * 60)
 
-    # 1. Get API key
+    image = rf_env.build_image_from_env(
+        env_path="environments/affine",
+        image_tag="affine:latest",
+        nocache=False,
+        quiet=False
+    )
+
     api_key = os.getenv("CHUTES_API_KEY")
     if not api_key:
         print("\n   ❌ CHUTES_API_KEY environment variable not set")
@@ -26,23 +32,19 @@ def main():
         print("   Or create .env file with: CHUTES_API_KEY=your-key")
         sys.exit(1)
 
-    # 2. Load environment from pre-built image with env vars
     print("\n1. Loading environment from pre-built image 'affine:latest'...")
     
     env = rf_env.load_env(
-        image="affine:latest",
+        image=image,
         mode="local",
         env_vars={"CHUTES_API_KEY": api_key}
     )
     print("   ✓ Environment loaded (container started with HTTP server)")
 
-
     try:
         print("\n2. Available methods in environment:")
-        methods = env.list_methods()
-        for method in methods:
-            print(f"   - {method}()")
-        
+        env.list_methods(print_info=True)
+
         print("\n3. Running evaluation in container...")
         result = env.evaluate(
             task_type="abd",
@@ -57,7 +59,6 @@ def main():
         print(f"   Success rate: {result['success_rate'] * 100:.1f}%")
         print(f"   Time taken: {result['time_taken']:.2f}s")
         
-        # Show details
         print(f"\n   Sample details:")
         for detail in result['details']:
             print(f"\n   Sample {detail['id']}:")
