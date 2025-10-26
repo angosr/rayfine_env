@@ -90,10 +90,12 @@ class LocalBackend(AbstractBackend):
                     docker_kwargs["environment"] = env_vars
             
             # Prepare container configuration
+            # Container HTTP server always runs on port 8000 internally
+            # Map it to the specified http_port on host
             container_config = {
                 "image": self.image,
                 "name": self.name,
-                "ports": {self.http_port: self.http_port},  # Expose HTTP port
+                "ports": {"8000/tcp": self.http_port},  # Map container:8000 -> host:http_port
                 "detach": True,
                 "restart_policy": {"Name": "always"},  # Auto-restart on failure
                 **docker_kwargs

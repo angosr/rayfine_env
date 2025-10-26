@@ -1,10 +1,15 @@
-"""Core layer - Environment management and registry"""
+"""Core environment management components"""
 
-from .registry import EnvironmentRegistry, get_registry
 from .wrapper import EnvironmentWrapper
+from .registry import EnvironmentRegistry, get_registry
+from .load_balancer import LoadBalancer, InstanceInfo
+from .instance_pool import InstancePool
 
 __all__ = [
+    "EnvironmentWrapper",
     "EnvironmentRegistry",
     "get_registry",
-    "EnvironmentWrapper",
+    "LoadBalancer",
+    "InstanceInfo",
+    "InstancePool",
 ]

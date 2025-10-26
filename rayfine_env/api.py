@@ -1,14 +1,15 @@
 """Public API for rayfine-env"""
 
 import time
-from typing import Optional, Dict, Any
+import asyncio
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 from .backends import LocalBackend, RemoteBackend
 from .infrastructure import ImageBuilder
-from .core import EnvironmentWrapper, get_registry
+from .core import EnvironmentWrapper, get_registry, InstancePool, InstanceInfo
 from .utils.logger import logger
-from .utils.exceptions import ValidationError
+from .utils.exceptions import ValidationError, BackendError
 
 
 def build_image_from_env(
@@ -58,85 +59,292 @@ def build_image_from_env(
 def load_env(
     image: str,
     mode: str = "local",
+    replicas: int = 1,
+    hosts: Optional[List[str]] = None,
+    load_balance: str = "random",
+    base_port: int = 8000,
     container_name: Optional[str] = None,
-    http_port: int = 8000,
     env_vars: Optional[Dict[str, str]] = None,
     env_type: Optional[str] = None,
     **backend_kwargs
 ) -> EnvironmentWrapper:
     """
-    Load and start an environment
+    Load and start an environment with multi-instance support
     
     Args:
         image: Docker image name (for local mode) or environment ID (for remote mode)
         mode: Execution mode - "local" or "remote"
-        container_name: Optional container name (local mode only)
-        http_port: HTTP server port (local mode only, default: 8000)
-        env_vars: Environment variables to pass to container (local mode only)
+        replicas: Number of instances to deploy (default: 1)
+        hosts: List of target hosts for deployment
+               - None or ["localhost"]: Deploy all replicas locally
+               - ["192.168.1.10", "192.168.1.11"]: Deploy to remote hosts via SSH
+               - Mix allowed: ["localhost", "192.168.1.10"]
+        load_balance: Load balancing strategy - "random" or "round_robin" (default: "random")
+        base_port: Starting HTTP port for instances (increments for each replica)
+        container_name: Optional container name prefix (local mode only)
+        env_vars: Environment variables to pass to container(s)
         env_type: Override environment type detection ("function_based" or "http_based")
         **backend_kwargs: Additional backend-specific parameters
         
     Returns:
         EnvironmentWrapper instance
         
-    Example (local mode):
+    Examples:
+        # Single instance (backward compatible)
+        >>> env = load_env(image="affine:latest")
+        
+        # 3 local instances with load balancing
+        >>> env = load_env(image="affine:latest", replicas=3)
+        
+        # 2 remote instances via SSH (Phase 3)
         >>> env = load_env(
         ...     image="affine:latest",
-        ...     env_vars={"CHUTES_API_KEY": "xxx"}
-        ... )
-        >>> result = env.evaluate(task_type="sat", num_samples=5)
-        >>> env.cleanup()
-        
-    Example (local mode with manual env_type):
-        >>> env = load_env(
-        ...     image="agentgym:webshop",
-        ...     env_type="http_based",
-        ...     env_vars={"CHUTES_API_KEY": "xxx"}
+        ...     replicas=2,
+        ...     hosts=["192.168.1.10", "192.168.1.11"]
         ... )
         
-    Example (remote mode - not yet implemented):
+        # Mixed: 1 local + 2 remote (Phase 3)
         >>> env = load_env(
-        ...     image="affine-v1",
-        ...     mode="remote",
-        ...     api_endpoint="https://api.example.com",
-        ...     api_key="xxx"
+        ...     image="affine:latest",
+        ...     replicas=3,
+        ...     hosts=["localhost", "192.168.1.10", "192.168.1.11"]
         ... )
     """
     try:
-        # Generate unique environment ID
-        logger.debug(f"Loading '{image}' in {mode} mode")
+        logger.debug(f"Loading '{image}' in {mode} mode (replicas={replicas})")
         
-        # Create appropriate backend
-        if mode == "local":
-            backend = LocalBackend(
+        # Validate parameters
+        if replicas < 1:
+            raise ValidationError("replicas must be >= 1")
+        
+        if hosts and len(hosts) < replicas:
+            raise ValidationError(
+                f"Not enough hosts ({len(hosts)}) for replicas ({replicas}). "
+                f"Either provide enough hosts or set hosts=None for local deployment."
+            )
+        
+        # Single instance mode (backward compatible)
+        if replicas == 1:
+            return _load_single_instance(
                 image=image,
+                mode=mode,
+                host=hosts[0] if hosts else "localhost",
+                port=base_port,
                 container_name=container_name,
-                http_port=http_port,
                 env_vars=env_vars,
-                env_type_override=env_type,
+                env_type=env_type,
                 **backend_kwargs
             )
-        elif mode == "remote":
-            backend = RemoteBackend(
-                environment_id=image,
-                **backend_kwargs
-            )
-        else:
-            raise ValidationError(f"Invalid mode: {mode}. Must be 'local' or 'remote'")
         
-        # Create wrapper
-        wrapper = EnvironmentWrapper(backend=backend)
-        
-        # Register in global registry
-        registry = get_registry()
-        registry.register(backend.name, wrapper)
-
-        logger.debug(f"Environment '{backend.name}' loaded successfully")
-        return wrapper
+        # Multi-instance mode
+        return _load_multi_instance(
+            image=image,
+            mode=mode,
+            replicas=replicas,
+            hosts=hosts,
+            load_balance=load_balance,
+            base_port=base_port,
+            container_name=container_name,
+            env_vars=env_vars,
+            env_type=env_type,
+            **backend_kwargs
+        )
         
     except Exception as e:
         logger.error(f"Failed to load environment: {e}")
         raise
+
+
+def _load_single_instance(
+    image: str,
+    mode: str,
+    host: str,
+    port: int,
+    container_name: Optional[str],
+    env_vars: Optional[Dict[str, str]],
+    env_type: Optional[str],
+    **backend_kwargs
+) -> EnvironmentWrapper:
+    """Load a single instance (backward compatible path)"""
+    
+    # Remote SSH deployment (Phase 3 - not yet implemented)
+    if host != "localhost":
+        raise NotImplementedError(
+            "Remote SSH deployment not yet implemented. "
+            "Use hosts=['localhost'] or hosts=None for local deployment."
+        )
+    
+    # Create local backend
+    if mode == "local":
+        backend = LocalBackend(
+            image=image,
+            container_name=container_name,
+            http_port=port,
+            env_vars=env_vars,
+            env_type_override=env_type,
+            **backend_kwargs
+        )
+    elif mode == "remote":
+        backend = RemoteBackend(
+            environment_id=image,
+            **backend_kwargs
+        )
+    else:
+        raise ValidationError(f"Invalid mode: {mode}. Must be 'local' or 'remote'")
+    
+    # Create wrapper
+    wrapper = EnvironmentWrapper(backend=backend)
+    
+    # Register in global registry
+    registry = get_registry()
+    registry.register(backend.name, wrapper)
+    
+    logger.debug(f"Single instance '{backend.name}' loaded successfully")
+    return wrapper
+
+
+def _load_multi_instance(
+    image: str,
+    mode: str,
+    replicas: int,
+    hosts: Optional[List[str]],
+    load_balance: str,
+    base_port: int,
+    container_name: Optional[str],
+    env_vars: Optional[Dict[str, str]],
+    env_type: Optional[str],
+    **backend_kwargs
+) -> EnvironmentWrapper:
+    """Load multiple instances with load balancing"""
+    
+    logger.info(f"Deploying {replicas} instances with {load_balance} load balancing")
+    
+    # Determine target hosts
+    if not hosts:
+        hosts = ["localhost"] * replicas
+    
+    # Validate remote hosts (Phase 3)
+    for host in hosts:
+        if host != "localhost":
+            raise NotImplementedError(
+                f"Remote SSH deployment to '{host}' not yet implemented. "
+                "Currently only localhost deployment is supported."
+            )
+    
+    # Create instances concurrently
+    instances = []
+    
+    try:
+        # Get or create event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Deploy all instances concurrently
+        async def deploy_all():
+            tasks = [
+                _deploy_instance(
+                    image=image,
+                    mode=mode,
+                    host=hosts[i],
+                    port=base_port + i,
+                    instance_id=i,
+                    container_name=container_name,
+                    env_vars=env_vars,
+                    env_type=env_type,
+                    **backend_kwargs
+                )
+                for i in range(replicas)
+            ]
+            return await asyncio.gather(*tasks)
+        
+        instances = loop.run_until_complete(deploy_all())
+        
+        logger.info(f"Successfully deployed {len(instances)} instances")
+        
+        # Create instance pool
+        pool = InstancePool(
+            instances=instances,
+            load_balance_strategy=load_balance
+        )
+        
+        # Create wrapper
+        wrapper = EnvironmentWrapper(backend=pool)
+        
+        # Register in global registry
+        registry = get_registry()
+        registry.register(pool.name, wrapper)
+        
+        logger.debug(f"Multi-instance pool '{pool.name}' loaded successfully")
+        return wrapper
+        
+    except Exception as e:
+        # Cleanup any successfully deployed instances
+        logger.error(f"Failed to deploy instances: {e}")
+        
+        if instances:
+            logger.info("Cleaning up partially deployed instances")
+            try:
+                async def cleanup_all():
+                    tasks = [inst.backend.cleanup() for inst in instances]
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                
+                loop.run_until_complete(cleanup_all())
+            except Exception as cleanup_error:
+                logger.warning(f"Error during cleanup: {cleanup_error}")
+        
+        raise BackendError(f"Multi-instance deployment failed: {e}")
+
+
+async def _deploy_instance(
+    image: str,
+    mode: str,
+    host: str,
+    port: int,
+    instance_id: int,
+    container_name: Optional[str],
+    env_vars: Optional[Dict[str, str]],
+    env_type: Optional[str],
+    **backend_kwargs
+) -> InstanceInfo:
+    """Deploy a single instance (async)"""
+    
+    logger.debug(f"Deploying instance {instance_id} on {host}:{port}")
+    
+    # Remote deployment (Phase 3)
+    if host != "localhost":
+        raise NotImplementedError("Remote SSH deployment not yet implemented")
+    
+    # Local deployment
+    if mode == "local":
+        # Generate unique container name
+        name_prefix = container_name or image.replace(":", "-")
+        unique_name = f"{name_prefix}-{instance_id}"
+        
+        backend = LocalBackend(
+            image=image,
+            container_name=unique_name,
+            http_port=port,
+            env_vars=env_vars,
+            env_type_override=env_type,
+            **backend_kwargs
+        )
+    else:
+        raise ValidationError(f"Mode '{mode}' not supported for multi-instance")
+    
+    # Create InstanceInfo
+    instance_info = InstanceInfo(
+        host=host,
+        port=port,
+        backend=backend,
+        healthy=True,
+        last_check=time.time()
+    )
+    
+    logger.debug(f"Instance {instance_id} deployed: {instance_info}")
+    return instance_info
 
 
 def list_active_environments() -> list:

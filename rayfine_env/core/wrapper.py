@@ -2,7 +2,7 @@
 
 import time
 import asyncio
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Union
 
 from ..backends.base import AbstractBackend
 from ..utils.exceptions import EnvironmentError
@@ -24,20 +24,28 @@ class EnvironmentWrapper:
     
     def __init__(
         self,
-        backend: AbstractBackend,
+        backend: Union[AbstractBackend, 'InstancePool'],
     ):
         """
         Initialize environment wrapper
         
         Args:
-            backend: Backend instance (LocalBackend or RemoteBackend)
-            env_id: Unique environment identifier
+            backend: Backend instance (LocalBackend, RemoteBackend, or InstancePool)
         """
+        # Import here to avoid circular dependency
+        from .instance_pool import InstancePool
+        
         self._backend = backend
+        self._is_pool = isinstance(backend, InstancePool)
         self.name = backend.name
         # Backend is ready immediately after initialization
         self._is_ready = backend.is_ready()
-        logger.debug(f"Created EnvironmentWrapper '{self.name}' (ready: {self._is_ready})")
+        
+        backend_type = "InstancePool" if self._is_pool else "Backend"
+        logger.debug(
+            f"Created EnvironmentWrapper '{self.name}' "
+            f"({backend_type}, ready: {self._is_ready})"
+        )
     
     async def cleanup(self) -> None:
         """
@@ -264,7 +272,23 @@ class EnvironmentWrapper:
             except Exception as e:
                 logger.warning(f"Error during async cleanup in __del__: {e}")
     
+    def get_stats(self) -> Optional[dict]:
+        """
+        Get statistics for multi-instance pools
+        
+        Returns:
+            Pool statistics dict if using InstancePool, None otherwise
+        """
+        if self._is_pool:
+            return self._backend.get_stats()
+        return None
+    
     def __repr__(self) -> str:
         """String representation"""
         status = "ready" if self.is_ready() else "not ready"
+        if self._is_pool:
+            stats = self._backend.get_stats()
+            healthy = stats.get("healthy_instances", 0)
+            total = stats.get("total_instances", 0)
+            return f"<EnvironmentWrapper '{self.name}' (pool: {healthy}/{total} healthy, {status})>"
         return f"<EnvironmentWrapper '{self.name}' ({status})>"

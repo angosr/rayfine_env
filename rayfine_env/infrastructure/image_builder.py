@@ -219,9 +219,19 @@ class ImageBuilder:
             server_template = template_dir / "http_server.py"
             shutil.copy2(server_template, tmpdir_path / "http_server.py")
             
-            # Copy wrapper Dockerfile
+            # Generate Dockerfile with metadata label
             wrapper_dockerfile = template_dir / "http_wrapper.Dockerfile"
-            shutil.copy2(wrapper_dockerfile, tmpdir_path / "Dockerfile")
+            dockerfile_content = wrapper_dockerfile.read_text()
+            
+            # Insert LABEL instruction before EXPOSE
+            label_line = f'LABEL rayfine.env.type="{EnvType.FUNCTION_BASED}"\n'
+            dockerfile_content = dockerfile_content.replace(
+                "# Expose HTTP port\nEXPOSE 8000",
+                f"# Save environment metadata\n{label_line}\n# Expose HTTP port\nEXPOSE 8000"
+            )
+            
+            # Write modified Dockerfile
+            (tmpdir_path / "Dockerfile").write_text(dockerfile_content)
             
             logger.debug(f"Two-stage build context created in {tmpdir}")
             
@@ -242,21 +252,53 @@ class ImageBuilder:
         """
         Save environment metadata to image labels
         
-        Note: Docker Python SDK doesn't support adding labels via tag() method.
-        Metadata is stored in image config during build process instead.
+        For http_based environments, we need to add labels after build
+        since they provide their own Dockerfile without rayfine labels.
         
         Args:
             image_tag: Image tag
             env_config: Environment configuration
         """
-        # Docker SDK's image.tag() doesn't support labels parameter
-        # Labels should be set during build using LABEL instruction in Dockerfile
-        # For now, we just verify the image exists
         try:
-            image = self.client.images.get(image_tag)
-            logger.debug(f"Image {image_tag} exists (type: {env_config.env_type})")
+            # For http_based environments, tag the image with metadata
+            if env_config.env_type == EnvType.HTTP_BASED:
+                image = self.client.images.get(image_tag)
+                
+                # Create a new Dockerfile to add label
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmpdir_path = Path(tmpdir)
+                    
+                    # Create minimal Dockerfile that just adds label
+                    dockerfile_content = f"""FROM {image_tag}
+LABEL rayfine.env.type="{env_config.env_type}"
+"""
+                    (tmpdir_path / "Dockerfile").write_text(dockerfile_content)
+                    
+                    # Build tagged version
+                    temp_tag = f"{image_tag}-labeled"
+                    self._build_image(
+                        context_path=str(tmpdir_path),
+                        tag=temp_tag,
+                        dockerfile="Dockerfile",
+                        buildargs=None,
+                        nocache=True,
+                        quiet=True
+                    )
+                    
+                    # Remove old image and retag
+                    self.client.images.remove(image_tag, force=True)
+                    labeled_image = self.client.images.get(temp_tag)
+                    labeled_image.tag(image_tag)
+                    self.client.images.remove(temp_tag, force=True)
+                    
+                    logger.debug(f"Added metadata label to {image_tag} (type: {env_config.env_type})")
+            else:
+                # function_based images already have label from http_wrapper.Dockerfile
+                image = self.client.images.get(image_tag)
+                logger.debug(f"Image {image_tag} exists (type: {env_config.env_type})")
+                
         except Exception as e:
-            logger.warning(f"Failed to verify image: {e}")
+            logger.warning(f"Failed to save metadata: {e}")
     
     def _resolve_buildargs(self, config_path: Path, buildargs: dict) -> dict:
         """
