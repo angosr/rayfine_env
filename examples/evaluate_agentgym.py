@@ -1,5 +1,3 @@
-"""Example: Evaluate AgentGym environment (webshop)"""
-
 import asyncio
 import os
 import sys
@@ -8,7 +6,6 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 async def main():
-    # Setup environment with build args
     rf_env.build_image_from_env(
         env_path="environments/agentgym",
         image_tag="agentgym:webshop",
@@ -22,7 +19,6 @@ async def main():
         print("   ❌ CHUTES_API_KEY environment variable not set")
         print("   Please set: export CHUTES_API_KEY='your-key'")
         print("   Or create .env file with: CHUTES_API_KEY=your-key")
-        env.cleanup()
         sys.exit(1)
 
     env = rf_env.load_env(
@@ -32,9 +28,8 @@ async def main():
         env_vars={"CHUTES_API_KEY": api_key}
     )
 
-    # Run evaluation
     print("\nRunning evaluation...")
-    result = env.evaluate(
+    result = await env.evaluate(
         model="deepseek-ai/DeepSeek-V3",
         base_url="https://llm.chutes.ai/v1",
         temperature=0.7,

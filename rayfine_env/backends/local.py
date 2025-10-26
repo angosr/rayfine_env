@@ -1,8 +1,12 @@
-"""Local backend - Docker + HTTP execution"""
+"""Local backend - Docker + async HTTP execution"""
 
 import time
+import asyncio
 from datetime import datetime
 from typing import Dict, Optional, Any
+
+import nest_asyncio
+nest_asyncio.apply()
 
 from .base import AbstractBackend
 from ..infrastructure import DockerManager, HTTPExecutor, EnvType
@@ -105,11 +109,19 @@ class LocalBackend(AbstractBackend):
                 timeout=600
             )
             
-            # Wait for HTTP server to be ready
+            # Wait for HTTP server to be ready (sync wrapper for async operation)
             # http_based environments may take longer to start (loading dependencies)
             timeout = 120 if self._env_type == EnvType.HTTP_BASED else 60
             logger.debug(f"Waiting for HTTP server on port {self.http_port} (timeout={timeout}s)")
-            if not self._wait_for_http_ready(timeout=timeout):
+            
+            # Run async health check in sync context
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            if not loop.run_until_complete(self._wait_for_http_ready(timeout=timeout)):
                 raise BackendError(
                     f"HTTP server did not start within {timeout}s. "
                     "Check container logs for errors."
@@ -142,19 +154,19 @@ class LocalBackend(AbstractBackend):
             logger.warning(f"Failed to get env type from image: {e}, defaulting to function_based")
             return EnvType.FUNCTION_BASED
     
-    def _wait_for_http_ready(self, timeout: int = 60) -> bool:
-        """Wait for HTTP server to be ready"""
+    async def _wait_for_http_ready(self, timeout: int = 60) -> bool:
+        """Wait for HTTP server to be ready (async)"""
         start = time.time()
         while time.time() - start < timeout:
             try:
-                if self._http_executor.health_check():
+                if await self._http_executor.health_check():
                     return True
             except Exception as e:
                 logger.debug(f"Health check failed: {e}")
-            time.sleep(1)
+            await asyncio.sleep(1)
         return False
     
-    def call_method(
+    async def call_method(
         self,
         method_name: str,
         *args,
@@ -162,7 +174,7 @@ class LocalBackend(AbstractBackend):
         **kwargs
     ) -> Any:
         """
-        Call a method from env.py via HTTP
+        Call a method from env.py via HTTP (async)
         
         Args:
             method_name: Method name to call
@@ -174,7 +186,7 @@ class LocalBackend(AbstractBackend):
             Method result
         """
         try:
-            return self._http_executor.call_method(
+            return await self._http_executor.call_method(
                 method_name,
                 *args,
                 **kwargs
@@ -182,26 +194,26 @@ class LocalBackend(AbstractBackend):
         except Exception as e:
             raise BackendError(f"Method call failed: {e}")
     
-    def list_methods(self) -> list:
+    async def list_methods(self) -> list:
         """
-        List all available methods from env.py
+        List all available methods from env.py (async)
         
         Returns:
             List of method names
         """
         try:
-            return self._http_executor.list_methods()
+            return await self._http_executor.list_methods()
         except Exception as e:
             raise BackendError(f"Failed to list methods: {e}")
     
-    def cleanup(self) -> None:
-        """Stop container and close HTTP client"""
+    async def cleanup(self) -> None:
+        """Stop container and close HTTP client (async)"""
         logger.debug(f"Cleaning up backend for container {self.name}")
         
         # Close HTTP client
         if self._http_executor:
             try:
-                self._http_executor.close()
+                await self._http_executor.close()
             except Exception as e:
                 logger.warning(f"Error closing HTTP client: {e}")
             finally:
@@ -250,4 +262,13 @@ class LocalBackend(AbstractBackend):
     
     def __del__(self):
         """Cleanup on deletion"""
-        self.cleanup()
+        # Run async cleanup in sync context
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is running, schedule cleanup as a task
+                asyncio.create_task(self.cleanup())
+            else:
+                loop.run_until_complete(self.cleanup())
+        except Exception as e:
+            logger.warning(f"Error during async cleanup in __del__: {e}")

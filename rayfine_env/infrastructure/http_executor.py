@@ -1,4 +1,4 @@
-"""HTTP-based remote execution"""
+"""HTTP-based remote execution with async support"""
 
 import httpx
 from typing import Any, Optional
@@ -9,7 +9,7 @@ from .env_detector import EnvType
 
 
 class HTTPExecutor:
-    """Unified HTTP executor for both environment types"""
+    """Unified async HTTP executor for both environment types"""
     
     def __init__(
         self,
@@ -25,8 +25,9 @@ class HTTPExecutor:
         """
         self.base_url = base_url.rstrip('/')
         self.env_type = env_type
-        # Use synchronous client to avoid event loop issues
-        self.client = httpx.Client(
+        self.timeout = timeout
+        # Use async client for non-blocking I/O
+        self.client = httpx.AsyncClient(
             timeout=timeout,
             limits=httpx.Limits(
                 max_connections=100,
@@ -35,14 +36,14 @@ class HTTPExecutor:
         )
         logger.debug(f"HTTPExecutor initialized: {base_url} (type: {env_type})")
     
-    def call_method(
+    async def call_method(
         self,
         method_name: str,
         *args,
         **kwargs
     ) -> Any:
         """
-        Call method via HTTP
+        Call method via HTTP (async)
         
         Routes:
         - function_based: POST /call with {"method": "...", "args": [...], "kwargs": {...}}
@@ -52,7 +53,7 @@ class HTTPExecutor:
             if self.env_type == EnvType.FUNCTION_BASED:
                 # Generic endpoint for function-based
                 logger.debug(f"Calling function-based method: {method_name}")
-                response = self.client.post(
+                response = await self.client.post(
                     f"{self.base_url}/call",
                     json={
                         "method": method_name,
@@ -63,7 +64,7 @@ class HTTPExecutor:
             else:  # HTTP_BASED
                 # Direct endpoint for http-based
                 logger.debug(f"Calling http-based endpoint: /{method_name}")
-                response = self.client.post(
+                response = await self.client.post(
                     f"{self.base_url}/{method_name}",
                     json=kwargs
                 )
@@ -91,16 +92,16 @@ class HTTPExecutor:
         except Exception as e:
             raise ExecutionError(f"Failed to call method '{method_name}': {e}")
     
-    def list_methods(self) -> list:
-        """List available methods with detailed information"""
+    async def list_methods(self) -> list:
+        """List available methods with detailed information (async)"""
         try:
             if self.env_type == EnvType.FUNCTION_BASED:
-                response = self.client.get(f"{self.base_url}/methods")
+                response = await self.client.get(f"{self.base_url}/methods")
                 data = response.json()
                 return data.get("methods", [])
             else:
                 # For http_based, parse OpenAPI schema
-                response = self.client.get(f"{self.base_url}/openapi.json")
+                response = await self.client.get(f"{self.base_url}/openapi.json")
                 schema = response.json()
                 return self._parse_openapi_schema(schema)
         except Exception as e:
@@ -173,10 +174,10 @@ class HTTPExecutor:
         
         return endpoints
     
-    def health_check(self) -> bool:
-        """Check server health"""
+    async def health_check(self) -> bool:
+        """Check server health (async)"""
         try:
-            response = self.client.get(
+            response = await self.client.get(
                 f"{self.base_url}/health",
                 timeout=5
             )
@@ -185,6 +186,6 @@ class HTTPExecutor:
             logger.debug(f"Health check failed: {e}")
             return False
     
-    def close(self):
-        """Close HTTP client"""
-        self.client.close()
+    async def close(self):
+        """Close HTTP client (async)"""
+        await self.client.aclose()

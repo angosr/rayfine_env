@@ -1,6 +1,7 @@
-"""Environment wrapper with dynamic method dispatch"""
+"""Environment wrapper with async dynamic method dispatch"""
 
 import time
+import asyncio
 from typing import Dict, Optional, Any
 
 from ..backends.base import AbstractBackend
@@ -38,24 +39,24 @@ class EnvironmentWrapper:
         self._is_ready = backend.is_ready()
         logger.debug(f"Created EnvironmentWrapper '{self.name}' (ready: {self._is_ready})")
     
-    def cleanup(self) -> None:
+    async def cleanup(self) -> None:
         """
-        Clean up environment resources
+        Clean up environment resources (async)
         
-        Stops containers, disconnects Ray, and frees resources.
+        Stops containers, disconnects HTTP client, and frees resources.
         Should be called when done using the environment.
         """
         try:
             logger.debug(f"Cleaning up environment '{self.name}'")
-            self._backend.cleanup()
+            await self._backend.cleanup()
             self._is_ready = False
             logger.debug(f"Environment '{self.name}' cleaned up")
         except Exception as e:
             logger.error(f"Error during cleanup of '{self.name}': {e}")
     
-    def list_methods(self, print_info: bool = True) -> list:
+    async def list_methods(self, print_info: bool = True) -> list:
         """
-        List all available methods in the environment
+        List all available methods in the environment (async)
         
         Args:
             print_info: If True, print formatted method information
@@ -69,7 +70,7 @@ class EnvironmentWrapper:
             )
         
         try:
-            methods = self._backend.list_methods()
+            methods = await self._backend.list_methods()
             
             if print_info:
                 self._print_method_info(methods)
@@ -201,10 +202,10 @@ class EnvironmentWrapper:
                 f"Environment '{self.name}' not ready."
             )
         
-        # Return a callable that will invoke the remote method
-        def method_caller(*args, timeout: Optional[int] = None, **kwargs):
+        # Return an async callable that will invoke the remote method
+        async def method_caller(*args, timeout: Optional[int] = None, **kwargs):
             """
-            Execute remote method
+            Execute remote method (async)
             
             Args:
                 *args: Positional arguments
@@ -217,7 +218,7 @@ class EnvironmentWrapper:
             try:
                 logger.debug(f"Calling method '{name}' on environment '{self.name}'")
                 
-                result = self._backend.call_method(
+                result = await self._backend.call_method(
                     name,
                     *args,
                     timeout=timeout,
@@ -240,12 +241,28 @@ class EnvironmentWrapper:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - automatic cleanup"""
-        self.cleanup()
+        # Run async cleanup in sync context
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.cleanup())
+            else:
+                loop.run_until_complete(self.cleanup())
+        except Exception as e:
+            logger.warning(f"Error during async cleanup in __exit__: {e}")
     
     def __del__(self):
         """Cleanup on deletion"""
         if self._is_ready:
-            self.cleanup()
+            # Run async cleanup in sync context
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(self.cleanup())
+                else:
+                    loop.run_until_complete(self.cleanup())
+            except Exception as e:
+                logger.warning(f"Error during async cleanup in __del__: {e}")
     
     def __repr__(self) -> str:
         """String representation"""

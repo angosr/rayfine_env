@@ -1,21 +1,15 @@
-"""
-Example: Load and interact with environment
-
-This example shows how to load an environment from a pre-built Docker image,
-set it up with environment variables, and execute methods.
-"""
-
 import rayfine_env as rf_env
 import os
 import sys
+import asyncio
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
 
-def main():
+async def main():
     print("\n" + "=" * 60)
-    print("Rayfine-Env: Environment Execution Example")
+    print("Rayfine-Env: Async Environment Execution Example")
     print("=" * 60)
 
     image = rf_env.build_image_from_env(
@@ -43,10 +37,10 @@ def main():
 
     try:
         print("\n2. Available methods in environment:")
-        env.list_methods(print_info=True)
+        await env.list_methods(print_info=True)
 
-        print("\n3. Running evaluation in container...")
-        result = env.evaluate(
+        print("\n3. Running evaluation in container (async)...")
+        result = await env.evaluate(
             task_type="abd",
             model="deepseek-ai/DeepSeek-V3",
             base_url="https://llm.chutes.ai/v1",
@@ -83,11 +77,11 @@ def main():
         traceback.print_exc()
     
     finally:
-        env.cleanup()
+        await env.cleanup()
         print("   ✓ Environment cleaned up (container stopped)")
 
     print("\n" + "=" * 60)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

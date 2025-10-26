@@ -1,6 +1,7 @@
 """Global environment registry for tracking active environments"""
 
 import atexit
+import asyncio
 from typing import Dict, Optional
 from threading import Lock
 
@@ -104,7 +105,19 @@ class EnvironmentRegistry:
                 try:
                     env = self._environments[env_id]
                     logger.debug(f"Cleaning up environment '{env_id}'")
-                    env.cleanup()
+                    
+                    # Handle async cleanup properly
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # If loop is running, schedule cleanup as a task
+                            asyncio.create_task(env.cleanup())
+                        else:
+                            loop.run_until_complete(env.cleanup())
+                    except RuntimeError:
+                        # No event loop, create new one
+                        asyncio.run(env.cleanup())
+                        
                 except Exception as e:
                     logger.error(f"Error cleaning up environment '{env_id}': {e}")
                 finally:
