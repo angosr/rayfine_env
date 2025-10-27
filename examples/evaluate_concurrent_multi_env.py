@@ -58,10 +58,9 @@ async def main():
     print("   Deploying affine with 3 instances...")
     env_affine = rf_env.load_env(
         image=affine_image,
-        mode="local",
+        mode="docker",
         replicas=3,
         load_balance="random",
-        base_port=8000,
         env_vars={"CHUTES_API_KEY": api_key}
     )
     print(f"   ✓ Affine: {env_affine}")
@@ -69,10 +68,9 @@ async def main():
     print("   Deploying agentgym:webshop with 2 instances...")
     env_agentgym = rf_env.load_env(
         image=agentgym_image,
-        mode="local",
+        mode="docker",
         replicas=2,
         load_balance="round_robin",
-        base_port=9000,
         env_vars={"CHUTES_API_KEY": api_key}
     )
     print(f"   ✓ AgentGym: {env_agentgym}")
@@ -120,62 +118,38 @@ async def main():
         
         # Create task lists
         tasks = []
-        task_labels = []
+        
+        # Common parameters
+        llm_params = {
+            "model": "deepseek-ai/DeepSeek-V3",
+            "base_url": "https://llm.chutes.ai/v1"
+        }
         
         # Affine tasks (15 total: 5 abd + 5 ded + 5 sat)
-        for i in range(5):
-            label = f"affine-abd-{i+1}"
-            task = env_affine.evaluate(
-                task_type="abd",
-                model="deepseek-ai/DeepSeek-V3",
-                base_url="https://llm.chutes.ai/v1",
-                num_samples=1,
-                timeout=60,
-                _timeout=90  # Call-level timeout: 90s
-            )
-            tasks.append(timed_task(task, label))
-            task_labels.append(label)
-        
-        for i in range(5):
-            label = f"affine-ded-{i+1}"
-            task = env_affine.evaluate(
-                task_type="ded",
-                model="deepseek-ai/DeepSeek-V3",
-                base_url="https://llm.chutes.ai/v1",
-                num_samples=1,
-                timeout=60,
-                _timeout=90  # Call-level timeout: 90s
-            )
-            tasks.append(timed_task(task, label))
-            task_labels.append(label)
-        
-        for i in range(5):
-            label = f"affine-sat-{i+1}"
-            task = env_affine.evaluate(
-                task_type="sat",
-                model="deepseek-ai/DeepSeek-V3",
-                base_url="https://llm.chutes.ai/v1",
-                num_samples=1,
-                timeout=60,
-                _timeout=90  # Call-level timeout: 90s
-            )
-            tasks.append(timed_task(task, label))
-            task_labels.append(label)
+        for task_type in ["abd", "ded", "sat"]:
+            for i in range(5):
+                label = f"affine-{task_type}-{i+1}"
+                task = env_affine.evaluate(
+                    task_type=task_type,
+                    num_samples=1,
+                    timeout=60,
+                    _timeout=90,
+                    **llm_params
+                )
+                tasks.append(timed_task(task, label))
         
         # AgentGym webshop tasks (5 total)
         for i in range(5):
             label = f"agentgym-webshop-{i+1}"
             task = env_agentgym.evaluate(
-                model="deepseek-ai/DeepSeek-V3",
-                base_url="https://llm.chutes.ai/v1",
                 temperature=0.7,
                 ids=[0],
                 max_round=10,
                 timeout=200,
-                _timeout=250  # Call-level timeout: 250s
+                _timeout=250,
+                **llm_params
             )
             tasks.append(timed_task(task, label))
-            task_labels.append(label)
         
         # Execute all tasks concurrently
         print(f"\n   Starting {len(tasks)} concurrent tasks...")

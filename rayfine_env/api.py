@@ -58,7 +58,7 @@ def build_image_from_env(
 
 def load_env(
     image: str,
-    mode: str = "local",
+    mode: str = "docker",
     replicas: int = 1,
     hosts: Optional[List[str]] = None,
     load_balance: str = "random",
@@ -72,8 +72,8 @@ def load_env(
     Load and start an environment with multi-instance support
     
     Args:
-        image: Docker image name (for local mode) or environment ID (for remote mode)
-        mode: Execution mode - "local" or "remote"
+        image: Docker image name (for docker mode) or environment ID (for rayfine mode)
+        mode: Execution mode - "docker" or "rayfine"
         replicas: Number of instances to deploy (default: 1)
         hosts: List of Docker daemon addresses for deployment
                - None or ["localhost"]: Deploy all replicas locally
@@ -167,8 +167,8 @@ def _load_single_instance(
 ) -> EnvironmentWrapper:
     """Load a single instance"""
     
-    # Create local backend (supports both local and SSH remote)
-    if mode == "local":
+    # Create backend based on mode
+    if mode == "docker":
         backend = LocalBackend(
             image=image,
             host=host,
@@ -178,13 +178,13 @@ def _load_single_instance(
             force_recreate=force_recreate,
             **backend_kwargs
         )
-    elif mode == "remote":
-        backend = RemoteBackend(
-            environment_id=image,
-            **backend_kwargs
+    elif mode == "rayfine":
+        raise ValidationError(
+            f"Rayfine mode is not yet supported. "
+            f"Please use mode='docker' for Docker-based deployment."
         )
     else:
-        raise ValidationError(f"Invalid mode: {mode}. Must be 'local' or 'remote'")
+        raise ValidationError(f"Invalid mode: {mode}. Must be 'docker' or 'rayfine'")
     
     # Create wrapper
     wrapper = EnvironmentWrapper(backend=backend)
@@ -300,8 +300,8 @@ async def _deploy_instance(
     host_display = host or "localhost"
     logger.debug(f"Deploying instance {instance_id} on {host_display}")
     
-    # Local deployment (supports SSH remote via host parameter)
-    if mode == "local":
+    # Docker deployment (supports SSH remote via host parameter)
+    if mode == "docker":
         # Generate unique container name
         name_prefix = container_name or image.replace(":", "-")
         unique_name = f"{name_prefix}-{instance_id}"

@@ -30,7 +30,7 @@ async def main():
     
     env = rf_env.load_env(
         image=image,
-        mode="local",
+        mode="docker",
         env_vars={"CHUTES_API_KEY": api_key}
     )
     print("   ✓ Environment loaded (container started with HTTP server)")

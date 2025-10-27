@@ -23,7 +23,7 @@ async def main():
 
     env = rf_env.load_env(
         image="agentgym:webshop",
-        mode="local",
+        mode="docker",
         env_type="http_based",
         env_vars={"CHUTES_API_KEY": api_key}
     )

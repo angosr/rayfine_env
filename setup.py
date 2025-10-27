@@ -26,6 +26,7 @@ setup(
         "python-dotenv>=1.0.0",
         "docker>=7.0.0",
         "httpx>=0.27.0",
+        "paramiko>=3.0.0",
     ],
     extras_require={
         "dev": [
