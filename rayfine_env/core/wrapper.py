@@ -211,14 +211,14 @@ class EnvironmentWrapper:
             )
         
         # Return an async callable that will invoke the remote method
-        async def method_caller(*args, timeout: Optional[int] = None, **kwargs):
+        async def method_caller(*args, _timeout: Optional[int] = None, **kwargs):
             """
             Execute remote method (async)
             
             Args:
                 *args: Positional arguments
-                timeout: Optional timeout in seconds
-                **kwargs: Keyword arguments
+                _timeout: Optional call-level timeout in seconds (not passed to remote)
+                **kwargs: Keyword arguments (passed to remote method)
                 
             Returns:
                 Method result
@@ -226,16 +226,22 @@ class EnvironmentWrapper:
             try:
                 logger.debug(f"Calling method '{name}' on environment '{self.name}'")
                 
-                result = await self._backend.call_method(
-                    name,
-                    *args,
-                    timeout=timeout,
-                    **kwargs
-                )
+                # Create the call coroutine
+                call_coro = self._backend.call_method(name, *args, **kwargs)
+                
+                # Apply call-level timeout if specified
+                if _timeout is not None:
+                    result = await asyncio.wait_for(call_coro, timeout=_timeout)
+                else:
+                    result = await call_coro
                 
                 logger.debug(f"Method '{name}' completed successfully")
                 return result
                 
+            except asyncio.TimeoutError:
+                raise EnvironmentError(
+                    f"Method '{name}' on environment '{self.name}' timed out after {_timeout}s"
+                )
             except Exception as e:
                 raise EnvironmentError(
                     f"Method '{name}' failed on environment '{self.name}': {e}"

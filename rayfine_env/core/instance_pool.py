@@ -48,7 +48,6 @@ class InstancePool:
         self,
         method_name: str,
         *args,
-        timeout: Optional[int] = None,
         **kwargs
     ) -> Any:
         """
@@ -57,7 +56,6 @@ class InstancePool:
         Args:
             method_name: Method name to call
             *args: Positional arguments
-            timeout: Optional timeout
             **kwargs: Keyword arguments
             
         Returns:
@@ -75,7 +73,6 @@ class InstancePool:
             result = await instance.backend.call_method(
                 method_name,
                 *args,
-                timeout=timeout,
                 **kwargs
             )
             

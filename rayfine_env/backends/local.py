@@ -176,7 +176,6 @@ class LocalBackend(AbstractBackend):
         self,
         method_name: str,
         *args,
-        timeout: Optional[int] = None,
         **kwargs
     ) -> Any:
         """
@@ -185,7 +184,6 @@ class LocalBackend(AbstractBackend):
         Args:
             method_name: Method name to call
             *args: Positional arguments
-            timeout: Optional timeout in seconds (not used currently)
             **kwargs: Keyword arguments
             
         Returns:

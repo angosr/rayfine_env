@@ -130,7 +130,8 @@ async def main():
                 model="deepseek-ai/DeepSeek-V3",
                 base_url="https://llm.chutes.ai/v1",
                 num_samples=1,
-                timeout=60
+                timeout=60,
+                _timeout=90  # Call-level timeout: 90s
             )
             tasks.append(timed_task(task, label))
             task_labels.append(label)
@@ -142,7 +143,8 @@ async def main():
                 model="deepseek-ai/DeepSeek-V3",
                 base_url="https://llm.chutes.ai/v1",
                 num_samples=1,
-                timeout=60
+                timeout=60,
+                _timeout=90  # Call-level timeout: 90s
             )
             tasks.append(timed_task(task, label))
             task_labels.append(label)
@@ -154,7 +156,8 @@ async def main():
                 model="deepseek-ai/DeepSeek-V3",
                 base_url="https://llm.chutes.ai/v1",
                 num_samples=1,
-                timeout=60
+                timeout=60,
+                _timeout=90  # Call-level timeout: 90s
             )
             tasks.append(timed_task(task, label))
             task_labels.append(label)
@@ -168,7 +171,8 @@ async def main():
                 temperature=0.7,
                 ids=[0],
                 max_round=10,
-                timeout=200
+                timeout=200,
+                _timeout=250  # Call-level timeout: 250s
             )
             tasks.append(timed_task(task, label))
             task_labels.append(label)
@@ -279,7 +283,6 @@ async def main():
     print(f"  Image build:    {build_time:>8.2f}s")
     print(f"  Deployment:     {deploy_time:>8.2f}s (5 instances total)")
     print(f"  Execution:      {exec_time:>8.2f}s (20 concurrent tasks)")
-    print(f"  Cleanup:        {cleanup_time:>8.2f}s")
     print(f"  {'─' * 30}")
     print(f"  Total time:     {total_time:>8.2f}s")
     print("=" * 80)

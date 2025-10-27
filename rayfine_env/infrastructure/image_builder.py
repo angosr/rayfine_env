@@ -78,7 +78,6 @@ class ImageBuilder:
             )
         
         # Step 1: Detect environment type
-        logger.info("Detecting environment type...")
         env_config = EnvDetector.detect(str(env_path))
         logger.info(f"Environment type: {env_config.env_type}")
         
@@ -245,7 +244,6 @@ class ImageBuilder:
                 quiet=quiet
             )
             
-            logger.info(f"HTTP server injected successfully")
             return image_id
     
     def _save_metadata(self, image_tag: str, env_config) -> None:
