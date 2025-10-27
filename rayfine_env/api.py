@@ -66,6 +66,7 @@ def load_env(
     container_name: Optional[str] = None,
     env_vars: Optional[Dict[str, str]] = None,
     env_type: Optional[str] = None,
+    force_recreate: bool = False,
     **backend_kwargs
 ) -> EnvironmentWrapper:
     """
@@ -84,6 +85,7 @@ def load_env(
         container_name: Optional container name prefix (local mode only)
         env_vars: Environment variables to pass to container(s)
         env_type: Override environment type detection ("function_based" or "http_based")
+        force_recreate: If True, remove and recreate containers even if they exist (default: False)
         **backend_kwargs: Additional backend-specific parameters
         
     Returns:
@@ -133,6 +135,7 @@ def load_env(
                 container_name=container_name,
                 env_vars=env_vars,
                 env_type=env_type,
+                force_recreate=force_recreate,
                 **backend_kwargs
             )
         
@@ -147,6 +150,7 @@ def load_env(
             container_name=container_name,
             env_vars=env_vars,
             env_type=env_type,
+            force_recreate=force_recreate,
             **backend_kwargs
         )
         
@@ -163,6 +167,7 @@ def _load_single_instance(
     container_name: Optional[str],
     env_vars: Optional[Dict[str, str]],
     env_type: Optional[str],
+    force_recreate: bool = False,
     **backend_kwargs
 ) -> EnvironmentWrapper:
     """Load a single instance (backward compatible path)"""
@@ -182,6 +187,7 @@ def _load_single_instance(
             http_port=port,
             env_vars=env_vars,
             env_type_override=env_type,
+            force_recreate=force_recreate,
             **backend_kwargs
         )
     elif mode == "remote":
@@ -213,6 +219,7 @@ def _load_multi_instance(
     container_name: Optional[str],
     env_vars: Optional[Dict[str, str]],
     env_type: Optional[str],
+    force_recreate: bool = False,
     **backend_kwargs
 ) -> EnvironmentWrapper:
     """Load multiple instances with load balancing"""
@@ -254,6 +261,7 @@ def _load_multi_instance(
                     container_name=container_name,
                     env_vars=env_vars,
                     env_type=env_type,
+                    force_recreate=force_recreate,
                     **backend_kwargs
                 )
                 for i in range(replicas)
@@ -307,6 +315,7 @@ async def _deploy_instance(
     container_name: Optional[str],
     env_vars: Optional[Dict[str, str]],
     env_type: Optional[str],
+    force_recreate: bool = False,
     **backend_kwargs
 ) -> InstanceInfo:
     """Deploy a single instance (async)"""
@@ -329,6 +338,7 @@ async def _deploy_instance(
             http_port=port,
             env_vars=env_vars,
             env_type_override=env_type,
+            force_recreate=force_recreate,
             **backend_kwargs
         )
     else:

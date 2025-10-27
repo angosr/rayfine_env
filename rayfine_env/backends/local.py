@@ -32,6 +32,7 @@ class LocalBackend(AbstractBackend):
         http_port: int = 8000,
         env_vars: Optional[Dict[str, str]] = None,
         env_type_override: Optional[str] = None,
+        force_recreate: bool = False,
         **docker_kwargs
     ):
         """
@@ -43,6 +44,7 @@ class LocalBackend(AbstractBackend):
             http_port: HTTP server port
             env_vars: Environment variables to pass to container
             env_type_override: Override environment type detection
+            force_recreate: If True, remove existing container and create new one
             **docker_kwargs: Additional Docker container options
         """
         self.image = image
@@ -57,6 +59,7 @@ class LocalBackend(AbstractBackend):
         self._is_setup = False
         self._env_type = None
         self._env_type_override = env_type_override
+        self._force_recreate = force_recreate
         
         # Start container with env vars
         self._start_container(env_vars=env_vars, **docker_kwargs)
@@ -98,10 +101,11 @@ class LocalBackend(AbstractBackend):
                 "ports": {"8000/tcp": self.http_port},  # Map container:8000 -> host:http_port
                 "detach": True,
                 "restart_policy": {"Name": "always"},  # Auto-restart on failure
+                "force_recreate": self._force_recreate,
                 **docker_kwargs
             }
             
-            # Start container
+            # Start container (will reuse if exists and force_recreate=False)
             self._container = self._docker_manager.start_container(**container_config)
             
             # Create HTTP executor

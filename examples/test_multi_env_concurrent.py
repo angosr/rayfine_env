@@ -106,12 +106,25 @@ async def main():
         
         exec_start = time.time()
         
+        # Create task wrapper with timing
+        async def timed_task(task_coro, label):
+            """Wrapper to track task execution time"""
+            start_time = time.time()
+            try:
+                result = await task_coro
+                elapsed = time.time() - start_time
+                return {"result": result, "elapsed": elapsed, "label": label, "error": None}
+            except Exception as e:
+                elapsed = time.time() - start_time
+                return {"result": None, "elapsed": elapsed, "label": label, "error": e}
+        
         # Create task lists
         tasks = []
         task_labels = []
         
         # Affine tasks (15 total: 5 abd + 5 ded + 5 sat)
         for i in range(5):
+            label = f"affine-abd-{i+1}"
             task = env_affine.evaluate(
                 task_type="abd",
                 model="deepseek-ai/DeepSeek-V3",
@@ -119,10 +132,11 @@ async def main():
                 num_samples=1,
                 timeout=60
             )
-            tasks.append(task)
-            task_labels.append(f"affine-abd-{i+1}")
+            tasks.append(timed_task(task, label))
+            task_labels.append(label)
         
         for i in range(5):
+            label = f"affine-ded-{i+1}"
             task = env_affine.evaluate(
                 task_type="ded",
                 model="deepseek-ai/DeepSeek-V3",
@@ -130,10 +144,11 @@ async def main():
                 num_samples=1,
                 timeout=60
             )
-            tasks.append(task)
-            task_labels.append(f"affine-ded-{i+1}")
+            tasks.append(timed_task(task, label))
+            task_labels.append(label)
         
         for i in range(5):
+            label = f"affine-sat-{i+1}"
             task = env_affine.evaluate(
                 task_type="sat",
                 model="deepseek-ai/DeepSeek-V3",
@@ -141,11 +156,12 @@ async def main():
                 num_samples=1,
                 timeout=60
             )
-            tasks.append(task)
-            task_labels.append(f"affine-sat-{i+1}")
+            tasks.append(timed_task(task, label))
+            task_labels.append(label)
         
         # AgentGym webshop tasks (5 total)
         for i in range(5):
+            label = f"agentgym-webshop-{i+1}"
             task = env_agentgym.evaluate(
                 model="deepseek-ai/DeepSeek-V3",
                 base_url="https://llm.chutes.ai/v1",
@@ -154,27 +170,41 @@ async def main():
                 max_round=10,
                 timeout=200
             )
-            tasks.append(task)
-            task_labels.append(f"agentgym-webshop-{i+1}")
+            tasks.append(timed_task(task, label))
+            task_labels.append(label)
         
         # Execute all tasks concurrently
         print(f"\n   Starting {len(tasks)} concurrent tasks...")
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        timed_results = await asyncio.gather(*tasks, return_exceptions=True)
         
         exec_time = time.time() - exec_start
         print(f"   ✓ All tasks completed in {exec_time:.2f}s")
         
-        # Analyze results
-        print("\n5. Results analysis:")
+        # Analyze results with timing information
+        print("\n5. Results analysis (with execution time):")
         
         affine_success = 0
         affine_failed = 0
         agentgym_success = 0
         agentgym_failed = 0
         
-        for i, (result, label) in enumerate(zip(results, task_labels)):
-            if isinstance(result, Exception):
-                print(f"   ❌ {label}: {type(result).__name__}")
+        # Collect timing statistics
+        affine_times = []
+        agentgym_times = []
+        
+        for timed_result in timed_results:
+            # Handle gather exceptions
+            if isinstance(timed_result, Exception):
+                print(f"   ❌ Task error: {type(timed_result).__name__}")
+                continue
+                
+            label = timed_result["label"]
+            elapsed = timed_result["elapsed"]
+            error = timed_result["error"]
+            result = timed_result["result"]
+            
+            if error is not None:
+                print(f"   ❌ {label}: {type(error).__name__} (time: {elapsed:.2f}s)")
                 if label.startswith("affine"):
                     affine_failed += 1
                 else:
@@ -182,15 +212,28 @@ async def main():
             else:
                 if label.startswith("affine"):
                     affine_success += 1
+                    affine_times.append(elapsed)
                     success_rate = result.get('success_rate', 0) * 100
-                    print(f"   ✓ {label}: score={result.get('total_score', 0)}, success={success_rate:.0f}%")
+                    print(f"   ✓ {label}: score={result.get('total_score', 0)}, success={success_rate:.0f}%, time={elapsed:.2f}s")
                 else:
                     agentgym_success += 1
-                    print(f"   ✓ {label}: score={result.get('total_score', 0)}, success={success_rate:.0f}%")
+                    agentgym_times.append(elapsed)
+                    success_rate = result.get('success_rate', 0) * 100
+                    print(f"   ✓ {label}: score={result.get('total_score', 0)}, success={success_rate:.0f}%, time={elapsed:.2f}s")
         
         print(f"\n   Summary:")
         print(f"     Affine: {affine_success}/{affine_success+affine_failed} successful")
+        if affine_times:
+            avg_affine = sum(affine_times) / len(affine_times)
+            min_affine = min(affine_times)
+            max_affine = max(affine_times)
+            print(f"       Time: avg={avg_affine:.2f}s, min={min_affine:.2f}s, max={max_affine:.2f}s")
         print(f"     AgentGym: {agentgym_success}/{agentgym_success+agentgym_failed} successful")
+        if agentgym_times:
+            avg_agentgym = sum(agentgym_times) / len(agentgym_times)
+            min_agentgym = min(agentgym_times)
+            max_agentgym = max(agentgym_times)
+            print(f"       Time: avg={avg_agentgym:.2f}s, min={min_agentgym:.2f}s, max={max_agentgym:.2f}s")
         print(f"     Overall: {affine_success+agentgym_success}/{len(tasks)} successful")
         
         # Show load distribution

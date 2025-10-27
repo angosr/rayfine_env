@@ -18,12 +18,57 @@ class DockerManager:
         except Exception as e:
             raise ContainerError(f"Failed to connect to Docker daemon: {e}")
     
+    def get_existing_container(self, name: str) -> Optional[Any]:
+        """
+        Get existing container by name if it exists
+        
+        Args:
+            name: Container name
+            
+        Returns:
+            Container object if exists (running or stopped), None otherwise
+        """
+        try:
+            container = self.client.containers.get(name)
+            container.reload()
+            logger.debug(f"Found container {name} with status: {container.status}")
+            return container
+                
+        except docker.errors.NotFound:
+            logger.debug(f"Container {name} not found")
+            return None
+        except Exception as e:
+            logger.warning(f"Error checking for existing container {name}: {e}")
+            return None
+    
+    def remove_container(self, name: str) -> bool:
+        """
+        Remove a container by name (force remove)
+        
+        Args:
+            name: Container name
+            
+        Returns:
+            True if removed, False if not found
+        """
+        try:
+            container = self.client.containers.get(name)
+            container.remove(force=True)
+            logger.debug(f"Container {name} removed")
+            return True
+        except docker.errors.NotFound:
+            return False
+        except Exception as e:
+            logger.warning(f"Error removing container {name}: {e}")
+            return False
+    
     def start_container(
         self,
         image: str,
         name: Optional[str] = None,
         ports: Optional[Dict[int, int]] = None,
         detach: bool = True,
+        force_recreate: bool = False,
         **kwargs
     ) -> Any:
         """
@@ -34,6 +79,7 @@ class DockerManager:
             name: Optional container name
             ports: Port mapping {container_port: host_port}
             detach: Run container in background
+            force_recreate: If True, remove existing container and create new one
             **kwargs: Additional docker.containers.run() parameters
             
         Returns:
@@ -49,6 +95,31 @@ class DockerManager:
                 self.client.images.get(image)
             except docker.errors.ImageNotFound:
                 raise ImageNotFoundError(f"Image '{image}' not found. Build it first using build_image_from_env()")
+            
+            # Check for existing container if name is provided
+            if name:
+                existing = self.get_existing_container(name)
+                if existing:
+                    if force_recreate:
+                        # Force recreate: remove and create new
+                        logger.info(f"Force recreating container: {name}")
+                        self.remove_container(name)
+                    else:
+                        # Reuse existing container
+                        if existing.status == "running":
+                            logger.info(f"Reusing running container: {name}")
+                            return existing
+                        else:
+                            # Container exists but not running, restart it
+                            logger.info(f"Restarting stopped container: {name}")
+                            existing.start()
+                            existing.reload()
+                            if existing.status == "running":
+                                return existing
+                            else:
+                                # Failed to restart, remove and recreate
+                                logger.warning(f"Failed to restart container {name}, recreating")
+                                self.remove_container(name)
             
             # Prepare container configuration
             container_config = {
