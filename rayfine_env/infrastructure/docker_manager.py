@@ -11,9 +11,25 @@ from ..utils.logger import logger
 class DockerManager:
     """Manages Docker container lifecycle operations"""
     
-    def __init__(self):
+    def __init__(self, host: Optional[str] = None):
+        """
+        Initialize Docker manager
+        
+        Args:
+            host: Docker daemon address
+                - None or "localhost": Local socket connection
+                - "ssh://user@host": SSH connection to remote daemon
+        """
         try:
-            self.client = docker.from_env()
+            if host and host.startswith("ssh://"):
+                # SSH connection to remote Docker daemon
+                self.client = docker.DockerClient(base_url=host)
+                logger.info(f"Connected to remote Docker daemon via SSH: {host}")
+            else:
+                # Local socket connection
+                self.client = docker.from_env()
+                logger.debug("Connected to local Docker daemon")
+            
             self.client.ping()
         except Exception as e:
             raise ContainerError(f"Failed to connect to Docker daemon: {e}")
@@ -66,18 +82,16 @@ class DockerManager:
         self,
         image: str,
         name: Optional[str] = None,
-        ports: Optional[Dict[int, int]] = None,
         detach: bool = True,
         force_recreate: bool = False,
         **kwargs
     ) -> Any:
         """
-        Start a Docker container
+        Start a Docker container (no port exposure)
         
         Args:
             image: Docker image name (e.g., "affine:latest")
             name: Optional container name
-            ports: Port mapping {container_port: host_port}
             detach: Run container in background
             force_recreate: If True, remove existing container and create new one
             **kwargs: Additional docker.containers.run() parameters
@@ -121,11 +135,11 @@ class DockerManager:
                                 logger.warning(f"Failed to restart container {name}, recreating")
                                 self.remove_container(name)
             
-            # Prepare container configuration
+            # Prepare container configuration (no port exposure)
             container_config = {
                 "image": image,
                 "detach": detach,
-                "remove": False,  # Don't auto-remove on exit
+                "remove": False,
                 "tty": True,
                 "stdin_open": True,
                 **kwargs
@@ -133,9 +147,6 @@ class DockerManager:
             
             if name:
                 container_config["name"] = name
-            
-            if ports:
-                container_config["ports"] = ports
             
             container = self.client.containers.run(**container_config)
             

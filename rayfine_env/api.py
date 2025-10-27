@@ -62,7 +62,6 @@ def load_env(
     replicas: int = 1,
     hosts: Optional[List[str]] = None,
     load_balance: str = "random",
-    base_port: int = 8000,
     container_name: Optional[str] = None,
     env_vars: Optional[Dict[str, str]] = None,
     env_type: Optional[str] = None,
@@ -76,12 +75,11 @@ def load_env(
         image: Docker image name (for local mode) or environment ID (for remote mode)
         mode: Execution mode - "local" or "remote"
         replicas: Number of instances to deploy (default: 1)
-        hosts: List of target hosts for deployment
+        hosts: List of Docker daemon addresses for deployment
                - None or ["localhost"]: Deploy all replicas locally
-               - ["192.168.1.10", "192.168.1.11"]: Deploy to remote hosts via SSH
-               - Mix allowed: ["localhost", "192.168.1.10"]
+               - ["ssh://user@host1", "ssh://user@host2"]: Deploy to remote Docker daemons via SSH
+               - Mix allowed: ["localhost", "ssh://user@host"]
         load_balance: Load balancing strategy - "random" or "round_robin" (default: "random")
-        base_port: Starting HTTP port for instances (increments for each replica)
         container_name: Optional container name prefix (local mode only)
         env_vars: Environment variables to pass to container(s)
         env_type: Override environment type detection ("function_based" or "http_based")
@@ -92,24 +90,24 @@ def load_env(
         EnvironmentWrapper instance
         
     Examples:
-        # Single instance (backward compatible)
+        # Single local instance
         >>> env = load_env(image="affine:latest")
         
         # 3 local instances with load balancing
         >>> env = load_env(image="affine:latest", replicas=3)
         
-        # 2 remote instances via SSH (Phase 3)
+        # 2 remote instances via SSH
         >>> env = load_env(
         ...     image="affine:latest",
         ...     replicas=2,
-        ...     hosts=["192.168.1.10", "192.168.1.11"]
+        ...     hosts=["ssh://user@host1", "ssh://user@host2"]
         ... )
         
-        # Mixed: 1 local + 2 remote (Phase 3)
+        # Mixed: 1 local + 2 remote
         >>> env = load_env(
         ...     image="affine:latest",
         ...     replicas=3,
-        ...     hosts=["localhost", "192.168.1.10", "192.168.1.11"]
+        ...     hosts=["localhost", "ssh://user@host1", "ssh://user@host2"]
         ... )
     """
     try:
@@ -130,8 +128,7 @@ def load_env(
             return _load_single_instance(
                 image=image,
                 mode=mode,
-                host=hosts[0] if hosts else "localhost",
-                port=base_port,
+                host=hosts[0] if hosts else None,
                 container_name=container_name,
                 env_vars=env_vars,
                 env_type=env_type,
@@ -146,7 +143,6 @@ def load_env(
             replicas=replicas,
             hosts=hosts,
             load_balance=load_balance,
-            base_port=base_port,
             container_name=container_name,
             env_vars=env_vars,
             env_type=env_type,
@@ -162,29 +158,21 @@ def load_env(
 def _load_single_instance(
     image: str,
     mode: str,
-    host: str,
-    port: int,
+    host: Optional[str],
     container_name: Optional[str],
     env_vars: Optional[Dict[str, str]],
     env_type: Optional[str],
     force_recreate: bool = False,
     **backend_kwargs
 ) -> EnvironmentWrapper:
-    """Load a single instance (backward compatible path)"""
+    """Load a single instance"""
     
-    # Remote SSH deployment (Phase 3 - not yet implemented)
-    if host != "localhost":
-        raise NotImplementedError(
-            "Remote SSH deployment not yet implemented. "
-            "Use hosts=['localhost'] or hosts=None for local deployment."
-        )
-    
-    # Create local backend
+    # Create local backend (supports both local and SSH remote)
     if mode == "local":
         backend = LocalBackend(
             image=image,
+            host=host,
             container_name=container_name,
-            http_port=port,
             env_vars=env_vars,
             env_type_override=env_type,
             force_recreate=force_recreate,
@@ -215,7 +203,6 @@ def _load_multi_instance(
     replicas: int,
     hosts: Optional[List[str]],
     load_balance: str,
-    base_port: int,
     container_name: Optional[str],
     env_vars: Optional[Dict[str, str]],
     env_type: Optional[str],
@@ -228,15 +215,7 @@ def _load_multi_instance(
     
     # Determine target hosts
     if not hosts:
-        hosts = ["localhost"] * replicas
-    
-    # Validate remote hosts (Phase 3)
-    for host in hosts:
-        if host != "localhost":
-            raise NotImplementedError(
-                f"Remote SSH deployment to '{host}' not yet implemented. "
-                "Currently only localhost deployment is supported."
-            )
+        hosts = [None] * replicas  # None means localhost
     
     # Create instances concurrently
     instances = []
@@ -256,7 +235,6 @@ def _load_multi_instance(
                     image=image,
                     mode=mode,
                     host=hosts[i],
-                    port=base_port + i,
                     instance_id=i,
                     container_name=container_name,
                     env_vars=env_vars,
@@ -309,8 +287,7 @@ def _load_multi_instance(
 async def _deploy_instance(
     image: str,
     mode: str,
-    host: str,
-    port: int,
+    host: Optional[str],
     instance_id: int,
     container_name: Optional[str],
     env_vars: Optional[Dict[str, str]],
@@ -320,13 +297,10 @@ async def _deploy_instance(
 ) -> InstanceInfo:
     """Deploy a single instance (async)"""
     
-    logger.debug(f"Deploying instance {instance_id} on {host}:{port}")
+    host_display = host or "localhost"
+    logger.debug(f"Deploying instance {instance_id} on {host_display}")
     
-    # Remote deployment (Phase 3)
-    if host != "localhost":
-        raise NotImplementedError("Remote SSH deployment not yet implemented")
-    
-    # Local deployment
+    # Local deployment (supports SSH remote via host parameter)
     if mode == "local":
         # Generate unique container name
         name_prefix = container_name or image.replace(":", "-")
@@ -334,8 +308,8 @@ async def _deploy_instance(
         
         backend = LocalBackend(
             image=image,
+            host=host,
             container_name=unique_name,
-            http_port=port,
             env_vars=env_vars,
             env_type_override=env_type,
             force_recreate=force_recreate,
@@ -344,10 +318,10 @@ async def _deploy_instance(
     else:
         raise ValidationError(f"Mode '{mode}' not supported for multi-instance")
     
-    # Create InstanceInfo
+    # Create InstanceInfo (use container internal IP as identifier)
     instance_info = InstanceInfo(
-        host=host,
-        port=port,
+        host=host_display,
+        port=8000,  # Internal port (not exposed)
         backend=backend,
         healthy=True,
         last_check=time.time()

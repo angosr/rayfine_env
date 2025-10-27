@@ -13,20 +13,21 @@ class HTTPExecutor:
     
     def __init__(
         self,
-        base_url: str,
-        env_type: str,
+        container_ip: str,
+        container_port: int = 8000,
+        env_type: str = None,
         timeout: int = 600
     ):
         """
         Args:
-            base_url: Container base URL (e.g., http://localhost:8000)
+            container_ip: Container internal IP address (e.g., 172.17.0.2)
+            container_port: Container internal port (default: 8000)
             env_type: EnvType.FUNCTION_BASED or EnvType.HTTP_BASED
             timeout: Request timeout in seconds
         """
-        self.base_url = base_url.rstrip('/')
+        self.base_url = f"http://{container_ip}:{container_port}"
         self.env_type = env_type
         self.timeout = timeout
-        # Use async client for non-blocking I/O
         self.client = httpx.AsyncClient(
             timeout=timeout,
             limits=httpx.Limits(
@@ -34,7 +35,7 @@ class HTTPExecutor:
                 max_keepalive_connections=20
             )
         )
-        logger.debug(f"HTTPExecutor initialized: {base_url} (type: {env_type})")
+        logger.debug(f"HTTPExecutor initialized: {self.base_url} (type: {env_type})")
     
     async def call_method(
         self,

@@ -28,8 +28,8 @@ class LocalBackend(AbstractBackend):
     def __init__(
         self,
         image: str,
+        host: Optional[str] = None,
         container_name: Optional[str] = None,
-        http_port: int = 8000,
         env_vars: Optional[Dict[str, str]] = None,
         env_type_override: Optional[str] = None,
         force_recreate: bool = False,
@@ -40,18 +40,17 @@ class LocalBackend(AbstractBackend):
         
         Args:
             image: Docker image name
+            host: Docker daemon address (None/"localhost" for local, "ssh://user@host" for remote)
             container_name: Optional container name
-            http_port: HTTP server port
             env_vars: Environment variables to pass to container
             env_type_override: Override environment type detection
             force_recreate: If True, remove existing container and create new one
             **docker_kwargs: Additional Docker container options
         """
         self.image = image
-        # Generate human-readable timestamp: YYYYMMDD-HHMMSS
+        self.host = host
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.name = container_name or f"{image.replace(':', '-')}-{timestamp}"
-        self.http_port = http_port
         
         self._container = None
         self._docker_manager = None
@@ -72,9 +71,9 @@ class LocalBackend(AbstractBackend):
             **docker_kwargs: Additional Docker options
         """
         try:
-            logger.debug(f"Starting container for image '{self.image}'")
+            logger.debug(f"Starting container for image '{self.image}' on host '{self.host or 'localhost'}'")
             
-            # Get environment type (use override if provided)
+            # Get environment type
             if self._env_type_override:
                 self._env_type = self._env_type_override
                 logger.info(f"Environment type (manual): {self._env_type}")
@@ -82,8 +81,8 @@ class LocalBackend(AbstractBackend):
                 self._env_type = self._get_env_type()
                 logger.info(f"Environment type (detected): {self._env_type}")
             
-            # Initialize Docker manager
-            self._docker_manager = DockerManager()
+            # Initialize Docker manager with host support
+            self._docker_manager = DockerManager(host=self.host)
             
             # Merge environment variables
             if env_vars:
@@ -92,33 +91,34 @@ class LocalBackend(AbstractBackend):
                 else:
                     docker_kwargs["environment"] = env_vars
             
-            # Prepare container configuration
-            # Container HTTP server always runs on port 8000 internally
-            # Map it to the specified http_port on host
+            # Prepare container configuration (no port exposure)
             container_config = {
                 "image": self.image,
                 "name": self.name,
-                "ports": {"8000/tcp": self.http_port},  # Map container:8000 -> host:http_port
                 "detach": True,
-                "restart_policy": {"Name": "always"},  # Auto-restart on failure
+                "restart_policy": {"Name": "always"},
                 "force_recreate": self._force_recreate,
                 **docker_kwargs
             }
             
-            # Start container (will reuse if exists and force_recreate=False)
+            # Start container
             self._container = self._docker_manager.start_container(**container_config)
             
-            # Create HTTP executor
+            # Get container internal IP
+            container_ip = self._docker_manager.get_container_ip(self._container)
+            logger.info(f"Container started with internal IP: {container_ip}")
+            
+            # Create HTTP executor with internal IP
             self._http_executor = HTTPExecutor(
-                base_url=f"http://localhost:{self.http_port}",
+                container_ip=container_ip,
+                container_port=8000,
                 env_type=self._env_type,
                 timeout=600
             )
             
-            # Wait for HTTP server to be ready (sync wrapper for async operation)
-            # http_based environments may take longer to start (loading dependencies)
+            # Wait for HTTP server to be ready
             timeout = 120 if self._env_type == EnvType.HTTP_BASED else 60
-            logger.debug(f"Waiting for HTTP server on port {self.http_port} (timeout={timeout}s)")
+            logger.debug(f"Waiting for HTTP server at {container_ip}:8000 (timeout={timeout}s)")
             
             # Run async health check in sync context
             try:
